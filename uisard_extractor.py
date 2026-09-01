@@ -136,7 +136,7 @@ class UISARDExtractor:
             logger.info("Autenticación exitosa para usuario: %s", self.usuario)
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Fallo en autenticación: %s", exc)
-            self._capturar_pantalla("error_login")
+           
             raise
 
     def _cerrar_cookies(self):
@@ -189,7 +189,7 @@ class UISARDExtractor:
 
             if opcion is None:
                 logger.error("No se encontró la opción 'Analista de Contratación' en el menú.")
-                self._capturar_pantalla("error_opcion_rol")
+             
                 return
 
             self._human_click(opcion)
@@ -197,7 +197,7 @@ class UISARDExtractor:
 
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error seleccionando rol: %s", exc)
-            self._capturar_pantalla("error_seleccion_rol")
+          
 
     # ------------------------------------------------------------------
     #  Navegación
@@ -211,7 +211,7 @@ class UISARDExtractor:
             logger.debug("Menú '%s' clickeado.", clave)
         except (TimeoutException, ElementClickInterceptedException) as exc:
             logger.error("Error navegando a '%s': %s", clave, exc)
-            self._capturar_pantalla(f"error_nav_{clave}")
+    
             raise
 
     def navegar_a_sistema_reportes(self):
@@ -246,7 +246,7 @@ class UISARDExtractor:
             logger.info("Tipo de reporte: Expedientes seleccionado.")
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error seleccionando tipo de reporte: %s", exc)
-            self._capturar_pantalla("error_tipo_reporte")
+   
 
     def _aplicar_filtros(self):
         wait = WebDriverWait(self.driver, 15)
@@ -270,7 +270,7 @@ class UISARDExtractor:
             )
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error aplicando fechas: %s", exc)
-            self._capturar_pantalla("error_filtros")
+           
             raise
 
     def _seleccionar_dia_calendario(self, fecha_iso: str):
@@ -319,7 +319,7 @@ class UISARDExtractor:
             return self._esperar_descarga(serie)
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error descargando serie '%s': %s", serie, exc)
-            self._capturar_pantalla(f"error_descarga_{serie}")
+       
             return None
 
     def _esperar_descarga(self, serie: str, timeout: int = 30) -> Optional[str]:
@@ -421,7 +421,7 @@ class UISARDExtractor:
     # ------------------------------------------------------------------
     #  Diagnóstico
     # ------------------------------------------------------------------
-    def _guardar_html_diagnostico(self, nombre: str):
+    def __html_diagnostico(self, nombre: str):
         carpeta = os.path.join(self.runtime_dir, "diagnostico")
         os.makedirs(carpeta, exist_ok=True)
         ruta = os.path.join(carpeta, f"{nombre}_{int(time.time())}.html")
@@ -433,24 +433,16 @@ class UISARDExtractor:
             logger.warning("No se pudo guardar HTML de diagnóstico.")
 
     # ------------------------------------------------------------------
-    def _capturar_pantalla(self, nombre: str):
-        carpeta = os.path.join(self.runtime_dir, "screenshots")
-        os.makedirs(carpeta, exist_ok=True)
-        ruta = os.path.join(carpeta, f"{nombre}_{int(time.time())}.png")
-        try:
-            self.driver.save_screenshot(ruta)
-            logger.info("Screenshot guardado: %s", ruta)
-        except Exception:
-            logger.warning("No se pudo capturar pantalla.")
+  
 
     def ejecutar_extraccion(self) -> pd.DataFrame:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
             self._cerrar_cookies()
-            self._guardar_html_diagnostico("post_login")
+  
             self.seleccionar_rol_analista()
-            self._guardar_html_diagnostico("post_rol")
+            
             self.navegar_a_sistema_reportes()
             self._seleccionar_tipo_reporte()
             return self.extraer_todas_series()
