@@ -161,7 +161,6 @@ class AlfrescoExtractor:
             logger.info("Autenticación exitosa para usuario: %s", self.usuario)
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Fallo en autenticación: %s", exc)
-            self._capturar_pantalla("error_login")
             raise
 
     # ------------------------------------------------------------------
@@ -273,10 +272,10 @@ class AlfrescoExtractor:
 
     def _hijos_cargados(self, ruta: list) -> bool:
         """True si el nodo ruta[-1] ya tiene hijos renderizados (chequeo fresco)."""
-        item = self._bajar_por_ruta(ruta)
-        if item is None:
-            return False
         try:
+            item = self._bajar_por_ruta(ruta)
+            if item is None:
+                return False
             hijos = self._contenedor_hijos(item)
             return len(hijos.find_elements(By.XPATH, "./div[contains(@class,'ygtvitem')]")) > 0
         except (NoSuchElementException, StaleElementReferenceException):
@@ -322,8 +321,7 @@ class AlfrescoExtractor:
             )
         except TimeoutException as exc:
             logger.error("No se expandió el nodo '%s' a tiempo: %s", ruta[-1], exc)
-            self._guardar_html_diagnostico("error_expandir_nodo")
-            self._capturar_pantalla("error_expandir_nodo")
+
             raise
 
         return self._contenedor_hijos(self._bajar_por_ruta(ruta))
@@ -607,8 +605,6 @@ class AlfrescoExtractor:
             self._traza("REPOSITORIO", R, item_raiz is not None)
             if item_raiz is None:
                 logger.error("No se encontró el nodo raíz '%s'.", R)
-                self._guardar_html_diagnostico("no_encontro_raiz")
-                self._capturar_pantalla("no_encontro_raiz")
                 return None, None, False
             logger.info("Repositorio '%s' OK. Expandiendo...", R)
             self._expandir_nodo([R], pre_wait=10, timeout=20)
@@ -622,7 +618,7 @@ class AlfrescoExtractor:
             self._traza("UAA", uaa, item_uaa is not None)
             if item_uaa is None:
                 logger.warning("UAA '%s' no encontrada bajo la raíz.", uaa)
-                self._guardar_html_diagnostico("no_encontro_uaa")
+        
                 return None, None, False
             logger.info("UAA '%s' OK. Expandiendo...", uaa)
             self._expandir_nodo([R, uaa])
@@ -640,7 +636,7 @@ class AlfrescoExtractor:
         self._traza("SERIE", serie_label or serie, serie_label is not None)
         if serie_label is None:
             logger.warning("SERIE '%s' no encontrada bajo UAA '%s'.", serie, uaa)
-            self._guardar_html_diagnostico("no_encontro_serie")
+        
             return None, None, False
         if (R, uaa, serie_label) not in self._expandidos:
             logger.info("SERIE '%s' OK. Expandiendo...", serie_label)
@@ -657,7 +653,7 @@ class AlfrescoExtractor:
         self._traza("SUB-SERIE", subserie_label or subserie, subserie_label is not None)
         if subserie_label is None:
             logger.warning("SUB-SERIE '%s' no encontrada bajo SERIE '%s'.", subserie, serie_label)
-            self._guardar_html_diagnostico("no_encontro_subserie")
+        
             return None, None, False
 
         self._entrar_nodo([R, uaa, serie_label, subserie_label])
@@ -715,8 +711,6 @@ class AlfrescoExtractor:
                 logger.info("EXPEDIENTE '%s' encontrado dentro de la subserie '%s'.", expediente, subserie_label)
             else:
                 logger.warning("EXPEDIENTE '%s' no encontrado dentro de la subserie '%s'.", expediente, subserie_label)
-                self._guardar_html_diagnostico("no_encontro_expediente")
-                self._capturar_pantalla("no_encontro_expediente")
 
         return True
 
@@ -732,9 +726,9 @@ class AlfrescoExtractor:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-            self._guardar_html_diagnostico("post_login")
+          
             self.navegar_al_repositorio()
-            self._guardar_html_diagnostico("post_repositorio")
+
             return self.navegar_ruta(uaa, serie, nombre_expediente)
         except Exception as exc:
             logger.critical("Fallo en la navegación de ruta Alfresco: %s", exc, exc_info=True)
@@ -839,8 +833,6 @@ class AlfrescoExtractor:
                 encontrado = self.navegar_ruta(uaa, serie, subserie, expediente=nombre)
             except Exception as exc:
                 logger.error("Excepción navegando '%s': %s", nombre, exc)
-                self._guardar_html_diagnostico("error_navegacion")
-                self._capturar_pantalla("error_navegacion")
                 encontrado = False
                 self.expediente_encontrado = False
                 self._ultima_traza = [t for t in self._ultima_traza] or [{
@@ -906,7 +898,7 @@ class AlfrescoExtractor:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-            self._guardar_html_diagnostico("post_login")
+       
             return self.verificar_expedientes_desde_csv(ruta_csv, ruta_pasos, ruta_resumen)
         except Exception as exc:
             logger.critical("Fallo en la verificación Alfresco desde CSV: %s", exc, exc_info=True)
@@ -917,17 +909,6 @@ class AlfrescoExtractor:
     # ------------------------------------------------------------------
     #  Utilidades
     # ------------------------------------------------------------------
-    def _guardar_html_diagnostico(self, nombre: str):
-        carpeta = os.path.join(self.runtime_dir, "diagnostico")
-        os.makedirs(carpeta, exist_ok=True)
-        ruta = os.path.join(carpeta, f"{nombre}_{int(time.time())}.html")
-        try:
-            with open(ruta, "w", encoding="utf-8") as f:
-                f.write(self.driver.page_source)
-            logger.info("HTML de diagnóstico guardado: %s", ruta)
-        except Exception:
-            logger.warning("No se pudo guardar HTML de diagnóstico.")
-
 
 
     # ------------------------------------------------------------------
@@ -937,7 +918,7 @@ class AlfrescoExtractor:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-            self._guardar_html_diagnostico("post_login")
+           
             return self.extraer_title()
         except Exception as exc:
             logger.critical("Fallo en la fase de extracción Alfresco: %s", exc, exc_info=True)
