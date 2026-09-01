@@ -142,6 +142,7 @@ def fase_alfresco(args, salidas: dict) -> None:
         usuario=alf_user,
         contrasena=alf_pass,
         rapido=not args.lento,
+        descargar_zip=not args.no_zip,
     )
     resultados = extractor.ejecutar_verificacion_csv(salidas["csv"])
     pasos = resultados.get("pasos", [])
@@ -161,6 +162,19 @@ def fase_alfresco(args, salidas: dict) -> None:
         "Verificación finalizada: %d registros | %d encontrados | %d no encontrados",
         total, encontrados, total - encontrados,
     )
+
+    reintento = resultados.get("reintento", [])
+    if reintento:
+        logger.info(
+            "FASE 1 (búsqueda) no encontró %d expedientes; se escribieron a: %s",
+            len(reintento), resultados.get("ruta_reintento", ""),
+        )
+    no_encontrados = resultados.get("pendientes", [])
+    if no_encontrados:
+        logger.info(
+            "Tras la ruta manual quedan %d pendientes: %s",
+            len(no_encontrados), resultados.get("ruta_pendientes", ""),
+        )
 
     if ruta_pasos:
         logger.info("Detalle por paso: %s", ruta_pasos)
@@ -197,6 +211,11 @@ def parsear_argumentos() -> argparse.Namespace:
         "--lento",
         action="store_true",
         help="Desactiva el modo rápido en Alfresco (pausas human-like).",
+    )
+    parser.add_argument(
+        "--no-zip",
+        action="store_true",
+        help="Omite la descarga/corroboración por ZIP en Alfresco (verificación más rápida).",
     )
     return parser.parse_args()
 
