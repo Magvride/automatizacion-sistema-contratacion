@@ -1,0 +1,13 @@
+
+# Credenciales y sesión local
+.env
+archivos/sesion/
+
+# Archivos generados por las ejecuciones
+archivos/contratos_uis/
+archivos/matriz_actualizada/
+archivos/extraccion_csv/
+archivos/resultados/
+logs/
+__pycache__/
+*.pyc
