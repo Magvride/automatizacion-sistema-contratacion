@@ -1,0 +1,3 @@
+2026-09-01 14:48:55 | WARNING  | alfresco_extractor:526 | Búsqueda '0298_2026000263_7047': resultado no confirma UAA/SERIE (nivel 2) -> '0298_2026000263_7047 en 1110_SEDE_GUATIGUARA / C09.33'. Se acepta por ser nombre único.
+2026-09-01 14:48:55 | WARNING  | alfresco_extractor:526 | Búsqueda '0298_2026000263_7047': resultado no confirma UAA/SERIE (nivel 1) -> '0298_2026000263_7047'. Se acepta por ser nombre único.
+2026-09-01 14:48:55 | WARNING  | alfresco_extractor:488 | Búsqueda 'X': estado inestable al leer resultados.
