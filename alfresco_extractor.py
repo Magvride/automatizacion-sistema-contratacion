@@ -414,14 +414,24 @@ class AlfrescoExtractor:
         objetivo = self._normalizar_texto(expediente)
 
         total_paginas = self._total_paginas()
+        pagina = self._pagina_actual() or 1
         if total_paginas is None:
-            total_paginas = 1
+            # No se pudo leer el total (paginador no detectado). Antes se truncaba a
+            # "1 página" y se rendía sin revisar el resto -> falso negativo. Ahora se
+            # recorre página a página hasta que no haya botón "siguiente".
+            logger.warning(
+                "Expediente '%s': no se detectó el total de páginas; se recorrerá "
+                "página a página hasta agotar el paginador.",
+                expediente,
+            )
+            total_paginas = max_paginas
         total_paginas = min(total_paginas, max_paginas)
         if total_paginas > 1:
             logger.info("Expediente '%s': %d páginas en la subserie.", expediente, total_paginas)
 
-        pagina = self._pagina_actual() or 1
-        for _ in range(total_paginas - pagina + 1):
+        paginas_recorridas = 0
+        while paginas_recorridas < max_paginas:
+            paginas_recorridas += 1
             try:
                 WebDriverWait(self.driver, timeout).until(
                     lambda _d: self._existe_documento(objetivo)
@@ -431,7 +441,7 @@ class AlfrescoExtractor:
                 pass
 
             actual = self._pagina_actual() or pagina
-            if actual >= total_paginas:
+            if paginas_recorridas >= total_paginas:
                 break
             if not self._ir_a_pagina_siguiente(actual + 1):
                 break
@@ -450,12 +460,22 @@ class AlfrescoExtractor:
 
     def _hay_resultado_busqueda(self, objetivo: str, uaa: Optional[str] = None,
                                 serie: Optional[str] = None):
-        """Devuelve la fila de resultado de búsqueda que coincide con ``objetivo``.
+        """Devuelve la fila de resultado de búsqueda que mejor coincide con ``objetivo``.
 
-        Confirma que el nombre del resultado contenga el objetivo y, si se
-        pasan ``uaa``/``serie``, que la ruta del resultado los incluya (evita
-        falsos positivos de carpetas homónimas en otra UAA).
+        Antes exigía que el resultado contuviera a la vez ``objetivo`` + ``UAA`` +
+        ``SERIE``; si la ruta se mostraba con otro formato (solo código o solo
+        nombre), el caso se descartaba ("sin resultados") aunque existiera, lo que
+        generaba falsos negativos.
+
+        Ahora se prioriza por confianza (sin dejar de vigilar falsos positivos):
+          1) Nombre + UAA + SERIE  -> co ruta exacta.
+          2) Nombre + UAA          -> la UAA cuadra (alta confianza).
+          3) Nombre solo           -> el nombre es casi único; se acepta y se loguea
+                                      la incertidumbre por si hubiera homónimos.
+
+        Devuelve la fila con mayor confianza, o None si ninguna menciona el objetivo.
         """
+        objetivo = self._normalizar_texto(objetivo)
         try:
             filas = self.driver.find_elements(
                 By.CSS_SELECTOR, "tr.alfresco-search-AlfSearchResult"
@@ -464,18 +484,51 @@ class AlfrescoExtractor:
                 filas = self.driver.find_elements(
                     By.XPATH, "//div[contains(@class,'alfresco-search-AlfSearchResult')]"
                 )
-            for fila in filas:
-                texto = self._normalizar_texto(fila.text)
-                if objetivo not in texto:
-                    continue
-                if uaa and uaa not in texto:
-                    continue
-                if serie and serie not in texto:
-                    continue
-                return fila
         except StaleElementReferenceException:
+            logger.warning("Búsqueda '%s': estado inestable al leer resultados.", objetivo)
             return None
-        return None
+
+        coincidentes = []  # (confianza, fila, texto)
+        for fila in filas:
+            try:
+                texto = self._normalizar_texto(fila.text)
+            except StaleElementReferenceException:
+                logger.warning("Búsqueda '%s': resultado caducó al leer su texto.", objetivo)
+                continue
+            if not objetivo or objetivo not in texto:
+                continue
+            if uaa and uaa in texto:
+                if serie and serie in texto:
+                    coincidentes.append((3, fila, texto))
+                else:
+                    coincidentes.append((2, fila, texto))
+            else:
+                coincidentes.append((1, fila, texto))
+
+        if not coincidentes:
+            return None
+
+        coincidentes.sort(key=lambda m: m[0], reverse=True)
+        nivel, fila_mejor, texto_mejor = coincidentes[0]
+
+        if nivel < 3:
+            # No se pudo confirmar la ruta (UAA/SERIE) en el texto del resultado.
+            # Se acepta porque el nombre es único, pero se alerta la incertidumbre
+            # y, si hay varios candidatos distintos, se avisa del riesgo de homónimo.
+            distintos = {self._normalizar_texto(c[2]) for c in coincidentes}
+            if len(distintos) > 1:
+                logger.warning(
+                    "Búsqueda '%s': %d candidatos sin confirmar ruta (nivel %d) -> %s. "
+                    "Revisar posible homónimo.",
+                    objetivo, len(distintos), nivel, ", ".join(sorted(distintos)),
+                )
+            else:
+                logger.warning(
+                    "Búsqueda '%s': resultado no confirma UAA/SERIE (nivel %d) -> '%s'. "
+                    "Se acepta por ser nombre único.",
+                    objetivo, nivel, texto_mejor,
+                )
+        return fila_mejor
 
     def _abrir_resultado(self, fila):
         """Clica el enlace del resultado para abrir la carpeta/expediente."""
@@ -494,60 +547,109 @@ class AlfrescoExtractor:
         return True
 
     def _carpeta_tiene_contenido(self, timeout: int = 12) -> bool:
-        """True si la carpeta abierta muestra al menos un fichero (h3.filename)."""
+        """True si la carpeta abierta muestra ficheros O subcarpetas.
+
+        Antes solo consideraba ``h3.filename``; si el expediente contenía solo
+        subcarpetas (o la vista usaba otro template), se daba por vacío -> falso
+        negativo. Ahora acepta cualquier ítem de la biblioteca.
+        """
         wait = WebDriverWait(self.driver, timeout)
+        selectores = [
+            "//h3[contains(@class,'filename')]",
+            "//tr[contains(@class,'yui-dt-rec')]",
+            "//tr[contains(@class,'yui-dt-even')]",
+            "//tr[contains(@class,'yui-dt-odd')]",
+            "//div[contains(@class,'doclist')]//td[contains(@class,'name')]//a",
+            "//a[contains(@class,'filter-change')]",
+            "//a[contains(@class,'item-name')]",
+        ]
         try:
             return wait.until(
-                lambda _d: len(
-                    _d.find_elements(By.XPATH, "//h3[contains(@class,'filename')]")
-                ) > 0
+                lambda _d: any(_d.find_elements(By.XPATH, s) for s in selectores)
             )
         except TimeoutException:
             return False
 
+    def _guardar_dom_diagnostico(self, prefijo: str):
+        """Vuelca el HTML actual a ``logs/diagnostico/`` para analizar una búsqueda fallida."""
+        try:
+            html = self.driver.page_source
+        except (WebDriverException, StaleElementReferenceException) as exc:
+            logger.warning("No se pudo capturar el DOM para diagnóstico: %s", exc)
+            return
+        carpeta = os.path.join(self.runtime_dir, "diagnostico")
+        os.makedirs(carpeta, exist_ok=True)
+        nombre = f"alfresco_{prefijo}_{int(time.time() * 1000)}.html"
+        ruta = os.path.join(carpeta, nombre)
+        try:
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(html)
+            logger.info("DOM de diagnóstico guardado: %s", ruta)
+        except OSError as exc:
+            logger.warning("No se pudo guardar DOM de diagnóstico: %s", exc)
+
     def _buscar_expediente_por_busqueda(
         self, expediente: str, uaa: Optional[str] = None, serie: Optional[str] = None,
-        timeout: int = 15,
+        timeout: int = 25, intentos: int = 2,
     ) -> bool:
         """Fast path: busca el expediente en el buscador global de Alfresco.
 
         1) Escribe el nombre en la caja de búsqueda del header y pulsa Enter.
-        2) Espera al resultado (fila alfresco-search-AlfSearchResult) y lo cruzase
-           con la UAA/SERIE del CSV.
-        3) Abre la carpeta resultante y comprueba que tiene ficheros dentro.
+        2) Espera al resultado (fila alfresco-search-AlfSearchResult) y lo cruza
+           con la UAA/SERIE del CSV (con tolerancia para no descartar casos que el
+           filtro estricto rechazaba y que sí existen).
+        3) Abre la carpeta resultante y comprueba que tiene contenido.
+
+        Con ``intentos`` > 1 se reintenta tras recargar el header, porque la caja
+        de búsqueda puede no estar disponible (página degradada) o la primera
+        consulta devolver vacío aun existiendo el expediente. En cualquier fallo
+        se vuelca el DOM a logs/diagnostico/ para auditar la causa.
         """
         objetivo = self._normalizar_texto(expediente)
-        wait = WebDriverWait(self.driver, timeout)
-        try:
-            caja = wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "input#HEADER_SEARCHBOX_FORM_FIELD, input.alfresco-header-SearchBox-text")
+        for intento in range(intentos):
+            if intento > 0:
+                logger.info("Fast path: reintento %d para '%s' (recargando header).", intento + 1, expediente)
+                self.navegar_al_repositorio()
+
+            wait = WebDriverWait(self.driver, timeout)
+            try:
+                caja = wait.until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, "input#HEADER_SEARCHBOX_FORM_FIELD, input.alfresco-header-SearchBox-text")
+                    )
                 )
-            )
-        except TimeoutException:
-            logger.warning("Fast path: caja de búsqueda del header no disponible.")
-            return False
+            except TimeoutException:
+                logger.warning("Fast path: caja de búsqueda del header no disponible (intento %d).", intento + 1)
+                if intento == intentos - 1:
+                    self._guardar_dom_diagnostico("buscador_no_disponible")
+                continue
 
-        try:
-            caja.clear()
-            caja.send_keys(objetivo)
-            time.sleep(self._human_pause(250, 600))
-            caja.send_keys(Keys.RETURN)
-        except (ElementNotInteractableException, StaleElementReferenceException, WebDriverException) as exc:
-            logger.warning("Fast path: no se pudo escribir en la caja: %s", exc)
-            return False
+            try:
+                caja.clear()
+                caja.send_keys(objetivo)
+                time.sleep(self._human_pause(250, 600))
+                caja.send_keys(Keys.RETURN)
+            except (ElementNotInteractableException, StaleElementReferenceException, WebDriverException) as exc:
+                logger.warning("Fast path: no se pudo escribir en la caja: %s", exc)
+                continue
 
-        try:
-            fila = wait.until(lambda _d: self._hay_resultado_busqueda(objetivo, uaa, serie))
-        except TimeoutException:
-            logger.warning("Fast path: sin resultados para '%s'.", expediente)
-            return False
+            try:
+                fila = wait.until(lambda _d: self._hay_resultado_busqueda(objetivo, uaa, serie))
+            except TimeoutException:
+                logger.warning("Fast path: sin resultados para '%s' (intento %d).", expediente, intento + 1)
+                self._guardar_dom_diagnostico("sin_resultados")
+                continue
 
-        if fila is None:
-            return False
-        if not self._abrir_resultado(fila):
-            return False
-        return self._carpeta_tiene_contenido()
+            if fila is None:
+                self._guardar_dom_diagnostico("sin_resultados_filtro")
+                continue
+            if not self._abrir_resultado(fila):
+                continue
+            if self._carpeta_tiene_contenido():
+                return True
+            logger.warning("Fast path: resultado '%s' abierto pero sin contenido visible.", expediente)
+
+        return False
 
     def _candidatos_serie(self, uaa: str, serie: str) -> list:
         """Etiquetas probables de la SERIE en el árbol.
