@@ -2,7 +2,7 @@
 """
 FASE 2 — Conciliación.
 
-Concatena todos los reportes por serie de ``reportes_demo/`` en un único CSV
+Concatena todos los reportes por serie de ``archivos/reportes_demo/`` en un único CSV
 con columnas estandarizadas, que luego consume la FASE 3 (Alfresco):
 
     NOMBRE EXPEDIENTE | NÚMERO CONTRATO | UAA | SERIE | SUBSERIE
@@ -21,12 +21,12 @@ import openpyxl
 import pandas as pd
 
 from utils.logger import configurar_logger
+from config import REPORTES_DIR, RESULTADOS_DIR
 
 logger = configurar_logger("conciliacion")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-RUTA_REPORTES = os.path.join(BASE_DIR, "reportes_demo")
-RUTA_SALIDA = os.path.join(BASE_DIR, "output", "conciliacion_datos.csv")
+RUTA_REPORTES = str(REPORTES_DIR)
+RUTA_SALIDA = str(RESULTADOS_DIR / "conciliacion_datos.csv")
 
 COLUMNAS_DESEADAS = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
 

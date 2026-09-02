@@ -13,6 +13,7 @@ import time
 from datetime import datetime, date
 
 from utils.logger import configurar_logger
+from config import REPORTES_DIR, RESULTADOS_DIR
 
 logger = configurar_logger("limpieza")
 
@@ -21,7 +22,7 @@ REGLAS = [
     ("logs", "ejecucion_*.log", 5, "logs de ejecución"),
     ("logs/diagnostico", "*.html", 10, "HTML de diagnóstico"),
     ("logs/screenshots", "*.png", 10, "capturas de pantalla"),
-    ("output", "consolidado_uisard_*.xlsx", 3, "consolidados con marca de tiempo"),
+    ("archivos/resultados", "consolidado_uisard_*.xlsx", 3, "consolidados con marca de tiempo"),
 ]
 
 
@@ -74,7 +75,7 @@ def _purgar_por_patron(base_dir: str, carpeta: str, patron: str, mantener: int, 
 def limpiar(base_dir: str, serie: str = None) -> dict:
     """Ejecuta la purga sobre todas las reglas (y reportes por serie si se indica).
 
-    ``serie`` permite purgar también los reportes por serie de ``reportes_demo/``
+    ``serie`` permite purgar también los reportes por serie de ``archivos/reportes_demo/``
     conservando los 3 más recientes por cada tipo (contrato/convenio/proyecto).
     Devuelve un resumen {descripción: eliminados}.
     """
@@ -87,7 +88,7 @@ def limpiar(base_dir: str, serie: str = None) -> dict:
         for prefijo in ("contrato", "convenio", "proyecto"):
             n = _purgar_por_patron(
                 base_dir,
-                "reportes_demo",
+                os.path.relpath(REPORTES_DIR, base_dir),
                 f"{prefijo}_reporte_*.xlsx",
                 3,
                 conservar_hoy=True,
