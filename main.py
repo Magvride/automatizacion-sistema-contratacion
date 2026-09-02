@@ -6,7 +6,7 @@ import builtins
 import os
 import sys
 import traceback
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -50,7 +50,7 @@ def construir_salidas(base_dir: str) -> dict:
 # ----------------------------------------------------------------------
 # BLOQUE PROPIO: Financiero UIS -> matriz -> CSV
 # ----------------------------------------------------------------------
-def paso_login_financiero() -> None:
+def paso_login_financiero(fecha_inicio: date, fecha_fin: date) -> None:
     """Descarga el Excel y omite únicamente la pausa final de cierre."""
     import uis_login_p1
 
@@ -65,7 +65,7 @@ def paso_login_financiero() -> None:
     builtins.input = input_del_flujo
     try:
         print("[MAIN] Paso 1/6: login y descarga del reporte financiero")
-        uis_login_p1.main()
+        uis_login_p1.main(fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
     finally:
         builtins.input = original_input
 
@@ -78,7 +78,7 @@ def ejecutar_bloque_propio(args) -> None:
         logger.info("--skip-financiero: se omite el bloque propio.")
         return
 
-    paso_login_financiero()
+    paso_login_financiero(args.fecha_inicio, args.fecha_fin)
     print("[MAIN] Paso 2/6: actualización de la matriz de seguimiento")
     seguimiento_p2.main()
     print("[MAIN] Paso 3/6: extracción del CSV normalizado")
@@ -97,16 +97,12 @@ def fase_uisard(args) -> None:
         logger.info("--skip-uisard: se omite la extracción.")
         return
 
-    hoy = datetime.now()
-    fecha_inicio = (hoy - timedelta(days=2)).strftime("%Y-%m-%d")
-    fecha_fin = (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
-
     extractor = UISARDExtractor(
         url=getenv("UISARD_URL", True),
         usuario=getenv("UISARD_USER", True),
         contrasena=getenv("UISARD_PASS", True),
-        fecha_inicio=fecha_inicio,
-        fecha_fin=fecha_fin,
+        fecha_inicio=args.fecha_inicio.strftime("%Y-%m-%d"),
+        fecha_fin=args.fecha_fin.strftime("%Y-%m-%d"),
     )
     # Descarga los reportes por serie a archivos/reportes_demo/ (alimenta la FASE 2).
     extractor.ejecutar_extraccion()
@@ -172,6 +168,30 @@ def fase_unificacion(args, salidas: dict, df_uisard: pd.DataFrame) -> str:
 
     logger.warning("No hay CSV del bloque propio; se verifica el consolidado UISARD directo.")
     return salidas["csv"]
+
+
+# ----------------------------------------------------------------------
+#  FASE 4 — Notificación a ordenadores sin registros en UISARD
+# ----------------------------------------------------------------------
+def fase_notificacion(args, salidas: dict, ruta_unificado: Optional[str] = None) -> None:
+    logger.info("=" * 60)
+    logger.info("FASE 4: Notificación a ordenadores sin registros en UISARD")
+    logger.info("=" * 60)
+
+    if args.no_notificar:
+        logger.info("--no-notificar: se omite la notificación.")
+        return
+
+    from notificar_uisard import notificar_no_uisard
+
+    ruta_csv = args.ruta_unificado or ruta_unificado or os.path.join(
+        salidas["carpeta"], "contratos_unificados.csv"
+    )
+    resumen = notificar_no_uisard(ruta_csv, enviar=args.enviar_correos)
+    logger.info(
+        "Notificación: %d registros, %d sin UISARD, %d correos generados.",
+        resumen["total"], resumen["sin_uisard"], resumen["mensajes"],
+    )
 
 
 # ----------------------------------------------------------------------
@@ -246,8 +266,30 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
 
 
 def parsear_argumentos() -> argparse.Namespace:
+    ayer = date.today() - timedelta(days=1)
+
+    def parsear_fecha(valor: str) -> date:
+        try:
+            return datetime.strptime(valor, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"Fecha inválida '{valor}'. Use el formato YYYY-MM-DD."
+            ) from exc
+
     parser = argparse.ArgumentParser(
         description="Flujo Financiero UIS -> matriz -> CSV -> UISARD -> Alfresco."
+    )
+    parser.add_argument(
+        "--fecha-inicio",
+        type=parsear_fecha,
+        default=ayer,
+        help="Fecha inicial de consulta en ambos sistemas (YYYY-MM-DD). Por defecto: ayer.",
+    )
+    parser.add_argument(
+        "--fecha-fin",
+        type=parsear_fecha,
+        default=ayer,
+        help="Fecha final de consulta en ambos sistemas (YYYY-MM-DD). Por defecto: ayer.",
     )
     parser.add_argument(
         "--skip-financiero",
@@ -286,11 +328,30 @@ def parsear_argumentos() -> argparse.Namespace:
         action="store_true",
         help="Omite la descarga/corroboración por ZIP en Alfresco (verificación más rápida).",
     )
+    parser.add_argument(
+        "--enviar-correos",
+        action="store_true",
+        help="Envía correos a los ordenadores con contratos no registrados en UISARD.",
+    )
+    parser.add_argument(
+        "--no-notificar",
+        action="store_true",
+        help="Omite la FASE 4 (notificación por correo).",
+    )
+    parser.add_argument(
+        "--ruta-unificado",
+        type=str,
+        default=None,
+        help="CSV unificado a leer para notificar (opcional).",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parsear_argumentos()
+    if args.fecha_inicio > args.fecha_fin:
+        logger.error("La fecha inicial no puede ser posterior a la fecha final.")
+        sys.exit(2)
     salidas = construir_salidas(BASE_DIR)
 
     logger.info("Inicio de ejecución: %s", datetime.now().isoformat())
@@ -306,6 +367,7 @@ def main():
         logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
         csv_verificacion = fase_unificacion(args, salidas, df)
         fase_alfresco(args, salidas, csv_verificacion)
+        fase_notificacion(args, salidas, csv_verificacion)
         logger.info("Proceso completo: bloque propio y bloque UISARD/Alfresco finalizados.")
 
     except KeyboardInterrupt:

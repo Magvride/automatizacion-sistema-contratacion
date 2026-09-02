@@ -253,9 +253,16 @@ def consultar_y_descargar_excel(page):
     return destino
 
 
-def main():
+def main(fecha_inicio=None, fecha_fin=None):
     ayer = date.today() - timedelta(days=1)
-    print(f"[+] Fecha objetivo (ayer): {ayer.strftime('%d/%m/%Y')}")
+    fecha_inicio = fecha_inicio or ayer
+    fecha_fin = fecha_fin or ayer
+    if fecha_inicio > fecha_fin:
+        raise ValueError("La fecha inicial no puede ser posterior a la fecha final.")
+    print(
+        f"[+] Rango de fechas: {fecha_inicio.strftime('%d/%m/%Y')} - "
+        f"{fecha_fin.strftime('%d/%m/%Y')}"
+    )
 
     # Stealth().use_sync envuelve sync_playwright() para que cualquier
     # browser.new_context() posterior reciba automáticamente los
@@ -305,9 +312,9 @@ def main():
         # --- Selección de Clase de Contrato ---
         seleccionar_clases_contrato(page)
 
-        # --- Fechas Desde / Hasta = ayer ---
-        set_fecha_calendario(page, CALENDAR_DESDE_BASE, ayer, "Desde")
-        set_fecha_calendario(page, CALENDAR_HASTA_BASE, ayer, "Hasta")
+        # --- Rango de fechas configurable ---
+        set_fecha_calendario(page, CALENDAR_DESDE_BASE, fecha_inicio, "Desde")
+        set_fecha_calendario(page, CALENDAR_HASTA_BASE, fecha_fin, "Hasta")
 
         # --- Clic en Consultar + descarga del Excel ---
         consultar_y_descargar_excel(page)

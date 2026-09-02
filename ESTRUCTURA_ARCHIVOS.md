@@ -17,11 +17,19 @@ Todas las entradas y salidas del flujo se guardan dentro de `archivos/`:
 2. `seguimiento_p2.py` toma el Excel más reciente y la matriz manual, y guarda la matriz actualizada en `archivos/matriz_actualizada/`.
 3. `extraccion_p21.py` toma la matriz actualizada más reciente y guarda `contratos_normalizados.csv` en `archivos/extraccion_csv/`.
 
-Para ejecutar el flujo completo, coloca primero la matriz manual en su carpeta y ejecuta:
+Para ejecutar el flujo completo con el rango predeterminado (ayer hasta ayer), coloca primero la matriz manual en su carpeta y ejecuta:
 
 ```text
 python main.py
 ```
+
+El rango de fechas se puede cambiar para ambos sistemas con:
+
+```text
+python main.py --fecha-inicio 2026-08-01 --fecha-fin 2026-08-31
+```
+
+Si no se indican fechas, tanto Financiero UIS como UISARD consultan únicamente el día anterior a la ejecución.
 
 El orquestador `main.py` encadena de forma secuencial:
 
