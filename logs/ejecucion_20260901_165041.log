@@ -1,9 +1,0 @@
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1135 | CSV cargado: 2 filas. Columnas: ['NOMBRE EXPEDIENTE', 'UAA', 'SERIE', 'SUBSERIE']
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1143 | CSV reordenado por ruta (UAA -> SERIE -> SUB-SERIE).
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1194 | [1/2] (búsqueda) 'ELIMINAR_CONTRATOS' -> NO ENCONTRADO (pasa a reintento)
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:998 | Traza: BUSQUEDA | 2025000159_9702 | OK
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1180 | Fast path: '2025000159_9702' localizado vía buscador global.
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1187 | [2/2] (búsqueda) '2025000159_9702' -> ENCONTRADO
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1199 | FASE 1: 1 no encontrados -> reintento: C:\Users\manue\AppData\Local\Temp\opencode\verificacion_alfresco_reintento.csv
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1226 | [reintento 1/1] 'ELIMINAR_CONTRATOS' -> ENCONTRADO
-2026-09-01 16:50:41 | INFO     | alfresco_extractor:1243 | Verificación finalizada (2 fases): 2 registros | 2 encontrados | 0 no encontrados. Pendientes: C:\Users\manue\AppData\Local\Temp\opencode\verificacion_alfresco_pendientes.csv

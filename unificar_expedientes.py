@@ -15,16 +15,18 @@ Este módulo es parte del flujo. Se ejecuta desde ``main.py``:
 
 import os
 import re
+import unicodedata
 
 import pandas as pd
 
-from config import EXTRACCION_DIR
+from config import EXTRACCION_DIR, MATRIZ_MANUAL_DIR
 from utils.logger import configurar_logger
 
 logger = configurar_logger("unificacion")
 
 # Columnas del expediente que llegan desde UISARD.
 COLUMNAS_UISARD = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
+PATRON_ORDENADORES = "Ordenadores_*.xlsx"
 
 
 def _clave_contrato(valor):
@@ -50,6 +52,80 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].fillna("").astype(str).str.strip()
     return df.fillna("")
+
+
+def _normalizar_nombre(valor) -> str:
+    """Normaliza nombres para cruzar el ordenador entre ambos archivos."""
+    if valor is None:
+        return ""
+    texto = str(valor).strip().upper()
+    texto = "".join(
+        caracter
+        for caracter in unicodedata.normalize("NFKD", texto)
+        if not unicodedata.combining(caracter)
+    )
+    return re.sub(r"\s+", " ", texto)
+
+
+def _buscar_archivo_ordenadores() -> str:
+    """Devuelve el archivo de ordenadores más reciente de la matriz manual."""
+    archivos = list(MATRIZ_MANUAL_DIR.glob(PATRON_ORDENADORES))
+    if not archivos:
+        return ""
+    return str(max(archivos, key=lambda archivo: archivo.stat().st_mtime))
+
+
+def _cargar_correos_ordenadores() -> dict:
+    """Carga el mapa nombre del ordenador -> correo desde el Excel manual."""
+    ruta = _buscar_archivo_ordenadores()
+    if not ruta:
+        logger.warning(
+            "No se encontró ningún archivo %s en %s; los correos quedan vacíos.",
+            PATRON_ORDENADORES,
+            MATRIZ_MANUAL_DIR,
+        )
+        return {}
+
+    try:
+        libro = pd.read_excel(ruta, dtype=str, header=None)
+    except Exception as exc:
+        logger.warning("No se pudo leer el archivo de ordenadores %s: %s", ruta, exc)
+        return {}
+
+    # La cabecera puede no estar en la primera fila (el reporte exporta título y
+    # fecha arriba). Se busca la fila que contiene las columnas esperadas.
+    nombre_col = "ORDENADORES DE GASTO"
+    correo_col = "CORREO"
+    fila_cabecera = None
+    indices = {}
+    for i, fila in libro.iterrows():
+        mapa = {_normalizar_nombre(celda): j for j, celda in enumerate(fila)}
+        if nombre_col in mapa and correo_col in mapa:
+            fila_cabecera = i
+            indices["nombre"] = mapa[nombre_col]
+            indices["correo"] = mapa[correo_col]
+            break
+
+    if fila_cabecera is None:
+        logger.warning(
+            "El archivo %s debe contener las columnas 'ordenadores de gasto' y 'correo'.",
+            ruta,
+        )
+        return {}
+
+    correos = {}
+    for _, fila in libro.iloc[fila_cabecera + 1:].iterrows():
+        nombre = _normalizar_nombre(fila.iloc[indices["nombre"]])
+        correo = str(fila.iloc[indices["correo"]]).strip() or ""
+        if nombre and correo and nombre not in correos:
+            correos[nombre] = correo
+
+    logger.info(
+        "Mapa de ordenadores cargado desde %s: %d registros.",
+        ruta,
+        len(correos),
+    )
+    return correos
 
 
 def _buscar_csv_propio() -> str:
@@ -84,6 +160,22 @@ def unir_consolidados(ruta_base: str, df_uisard: pd.DataFrame, ruta_salida: str)
 
     merged = base.merge(uis_import, on="_clave", how="left")
     merged = merged.fillna("")
+
+    # Completa el correo usando el archivo manual de ordenadores más reciente.
+    correos_ordenadores = _cargar_correos_ordenadores()
+    if "correo_ordenador" not in merged.columns:
+        merged["correo_ordenador"] = ""
+    if correos_ordenadores and "ordenador" in merged.columns:
+        correos = merged["ordenador"].map(
+            lambda nombre: correos_ordenadores.get(_normalizar_nombre(nombre), "")
+        )
+        encontrados = correos != ""
+        merged.loc[encontrados, "correo_ordenador"] = correos[encontrados]
+        logger.info(
+            "Correos de ordenadores completados: %d de %d contratos.",
+            int(encontrados.sum()),
+            len(merged),
+        )
 
     # Indicador de presencia en UISARD (rellena la columna que el bloque propio dejó vacía).
     if "NOMBRE EXPEDIENTE" in merged.columns:
