@@ -24,7 +24,10 @@ from alfresco_extractor import AlfrescoExtractor
 from utils.limpieza import limpiar
 from config import REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def getenv(clave: str, requerido: bool = False) -> str:
