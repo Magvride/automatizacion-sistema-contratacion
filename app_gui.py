@@ -6,8 +6,10 @@ flujo (Financiero UIS → matriz → CSV → UISARD → Alfresco) se ejecuta de 
 automática. Ocupa la biblioteca estándar `tkinter` (sin dependencias extra).
 """
 
+import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -16,15 +18,64 @@ from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FROZEN = getattr(sys, "frozen", False)
+
+if FROZEN:
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
-RESULTADOS_DIR = os.path.join(BASE_DIR, "archivos", "resultados")
 
 FORMATO_FECHA = "%Y-%m-%d"
 
 
 def fecha_por_defecto() -> str:
     return (date.today() - timedelta(days=1)).strftime(FORMATO_FECHA)
+
+
+class _ColaWriter:
+    """Pseudo-stream: convierte lo escrito (print) en líneas para la cola de la GUI."""
+
+    def __init__(self, cola) -> None:
+        self.cola = cola
+        self._buf = ""
+
+    def write(self, texto: str) -> None:
+        if not texto:
+            return
+        self._buf += texto
+        while "\n" in self._buf:
+            linea, self._buf = self._buf.split("\n", 1)
+            self.cola.put(("linea", linea + "\n"))
+
+    def flush(self) -> None:
+        if self._buf:
+            self.cola.put(("linea", self._buf))
+            self._buf = ""
+
+
+class _ColaLogHandler(logging.Handler):
+    """Handler de logging que envía cada registro a la ventana y a un archivo."""
+
+    def __init__(self, cola, nombre_log_dir: str) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.cola = cola
+        self.setFormatter(logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(module)s:%(lineno)d | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        os.makedirs(nombre_log_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._archivo = os.path.join(nombre_log_dir, f"ejecucion_{timestamp}.log")
+        self._fh = open(self._archivo, "a", encoding="utf-8")
+
+    def emit(self, record) -> None:
+        try:
+            self._fh.write(self.format(record) + "\n")
+            self._fh.flush()
+        except OSError:
+            pass
+        self.cola.put(("linea", self.format(record) + "\n"))
 
 
 class AppContratacion(tk.Tk):
@@ -38,6 +89,7 @@ class AppContratacion(tk.Tk):
 
         self.proc: subprocess.Popen | None = None
         self.cola = queue.Queue()
+        self._en_git = False
 
         self._estilo_ttk()
         self._construir_interfaz()
@@ -142,10 +194,10 @@ class AppContratacion(tk.Tk):
         )
         self.btn_detener.pack(side=tk.LEFT, padx=(8, 0))
 
-        self.btn_abrir = ttk.Button(
-            barra, text="Abrir resultados", command=self._abrir_resultados,
+        self.btn_git = ttk.Button(
+            barra, text="🔄  Actualizar (git)", command=self._actualizar_codigo,
         )
-        self.btn_abrir.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_git.pack(side=tk.LEFT, padx=(8, 0))
 
         self.var_estado = tk.StringVar(value="")
         ttk.Label(
@@ -200,26 +252,41 @@ class AppContratacion(tk.Tk):
             return False
         return True
 
-    def _construir_comando(self) -> list:
-        cmd = [sys.executable, MAIN_PY]
+    def _construir_argumentos(self) -> list:
+        """Devuelve solo los flags de CLI (sin el script), p. ej. ['--fecha-inicio','2026-...']."""
+        args = []
         inicio = self.var_fecha_inicio.get().strip()
         fin = self.var_fecha_fin.get().strip()
         if inicio:
-            cmd += ["--fecha-inicio", inicio]
+            args += ["--fecha-inicio", inicio]
         if fin:
-            cmd += ["--fecha-fin", fin]
-        return cmd
+            args += ["--fecha-fin", fin]
+        return args
 
     def _ejecutar(self) -> None:
-        if self.proc is not None:
+        if self.proc is not None or getattr(self, "_en_proceso", False):
             return
         if not self._validar_fechas():
             return
 
-        cmd = self._construir_comando()
+        self.btn_ejecutar.configure(state=tk.DISABLED)
+        self.var_estado.set("Ejecutando…")
+        self._append_log("Ejecutando flujo de contratación…\n")
+
+        if FROZEN:
+            # Ejecución embebida (sin pythonw ni main.py en disco): correr en un hilo.
+            self._en_proceso = True
+            self.btn_detener.configure(state=tk.DISABLED)
+            threading.Thread(target=self._ejecutar_en_proceso, daemon=True).start()
+        else:
+            self._en_proceso = False
+            self.btn_detener.configure(state=tk.NORMAL)
+            self._ejecutar_subproceso()
+
+    def _ejecutar_subproceso(self) -> None:
+        cmd = [sys.executable, MAIN_PY] + self._construir_argumentos()
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
-
         try:
             self.proc = subprocess.Popen(
                 cmd,
@@ -236,14 +303,55 @@ class AppContratacion(tk.Tk):
         except OSError as exc:
             messagebox.showerror("No se pudo iniciar", f"No se pudo lanzar el proceso:\n{exc}")
             self.var_estado.set("Error al iniciar")
+            self.btn_ejecutar.configure(state=tk.NORMAL)
+            self.btn_detener.configure(state=tk.DISABLED)
             return
-
-        self.btn_ejecutar.configure(state=tk.DISABLED)
-        self.btn_detener.configure(state=tk.NORMAL)
-        self.var_estado.set("Ejecutando…")
-        self._append_log("Ejecutando flujo de contratación…\n")
-
         threading.Thread(target=self._leer_salida, args=(self.proc,), daemon=True).start()
+
+    def _configurar_loggers(self) -> None:
+        """Redirige el logging de todos los módulos del flujo hacia la ventana y a un archivo."""
+        import logging
+
+        handler = _ColaLogHandler(self.cola, os.path.join(BASE_DIR, "logs"))
+        nombres = [
+            "main", "uisard", "conciliacion", "alfresco",
+            "notificacion", "unificacion", "limpieza", "uisard_alfresco",
+        ]
+        for nombre in nombres:
+            lg = logging.getLogger(nombre)
+            lg.handlers = [handler]  # se reemplazan los handlers de StreamHandler
+            lg.setLevel(logging.DEBUG)
+            lg.propagate = False
+
+    def _ejecutar_en_proceso(self) -> None:
+        """Ejecuta main.main() dentro del mismo proceso (modo compilado)."""
+        self._configurar_loggers()
+
+        escritor = _ColaWriter(self.cola)
+        viejo_out, viejo_err = sys.stdout, sys.stderr
+        sys.stdout = escritor
+        sys.stderr = escritor
+        sys.argv = ["main.py"] + self._construir_argumentos()
+
+        codigo = 0
+        try:
+            import main
+            main.main()
+        except SystemExit as exc:
+            codigo = exc.code if isinstance(exc.code, int) else 1
+        except KeyboardInterrupt:
+            self.cola.put(("linea", "\n[APP] Proceso interrumpido por el usuario.\n"))
+            codigo = 0
+        except Exception as exc:
+            import traceback
+            self.cola.put(("linea", f"ERROR FATAL: {exc}\n"))
+            self.cola.put(("linea", traceback.format_exc() + "\n"))
+            codigo = 1
+        finally:
+            sys.stdout = viejo_out
+            sys.stderr = viejo_err
+
+        self.cola.put(("fin", codigo))
 
     def _leer_salida(self, proc: subprocess.Popen) -> None:
         try:
@@ -261,6 +369,8 @@ class AppContratacion(tk.Tk):
                     self._append_log(valor)
                 elif tipo == "fin":
                     self._finalizar(valor)
+                elif tipo == "git_fin":
+                    self._finalizar_git(valor)
         except queue.Empty:
             pass
         self.after(100, self._procesar_cola)
@@ -281,6 +391,7 @@ class AppContratacion(tk.Tk):
 
     def _finalizar(self, codigo: int) -> None:
         self.proc = None
+        self._en_proceso = False
         self.btn_ejecutar.configure(state=tk.NORMAL)
         self.btn_detener.configure(state=tk.DISABLED)
         if codigo == 0:
@@ -296,12 +407,76 @@ class AppContratacion(tk.Tk):
             self._append_log("Detenido por el usuario.\n")
             self.var_estado.set("Proceso detenido")
 
-    def _abrir_resultados(self) -> None:
-        os.makedirs(RESULTADOS_DIR, exist_ok=True)
-        try:
-            os.startfile(RESULTADOS_DIR)
-        except OSError as exc:
-            messagebox.showerror("No se pudo abrir", f"No se pudo abrir la carpeta:\n{exc}")
+    def _actualizar_codigo(self) -> None:
+        if self.proc is not None or getattr(self, "_en_proceso", False) or self._en_git:
+            return
+        git = shutil.which("git")
+        if not git:
+            messagebox.showerror(
+                "Git no encontrado",
+                "No se encontró Git en el sistema. Instálalo (https://git-scm.com)\n"
+                "o ejecuta 'git pull' desde la terminal.",
+            )
+            return
+        self._en_git = True
+        self.btn_ejecutar.configure(state=tk.DISABLED)
+        self.btn_detener.configure(state=tk.DISABLED)
+        self.btn_git.configure(state=tk.DISABLED)
+        self.var_estado.set("Descargando cambios…")
+        self._append_log("\n[GIT] Actualizando código desde el repositorio…\n")
+        threading.Thread(target=self._ejecutar_git, args=(git,), daemon=True).start()
+
+    def _ejecutar_git(self, git: str) -> None:
+        def correr(args):
+            proc = subprocess.Popen(
+                [git] + args, cwd=BASE_DIR,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+            )
+            for linea in proc.stdout:
+                linea = linea.rstrip()
+                if linea:
+                    self.cola.put(("linea", linea + "\n"))
+            return proc.wait()
+
+        resultado = "error"
+        if correr(["rev-parse", "--is-inside-work-tree"]) != 0:
+            self.cola.put(("linea", "\n[GIT] La carpeta no es un repositorio Git.\n"))
+            resultado = "no_repo"
+        elif correr(["remote", "-v"]) != 0:
+            self.cola.put(("linea", "\n[GIT] El repositorio no tiene un remoto configurado.\n"))
+            resultado = "no_remote"
+        else:
+            self.cola.put(("linea", "[GIT] Descargando referencias (git fetch)…\n"))
+            correr(["fetch", "--all", "--prune"])
+            self.cola.put(("linea", "[GIT] Integrando cambios (git pull --ff-only)…\n"))
+            codigo = correr(["pull", "--ff-only"])
+            if codigo == 0:
+                self.cola.put(("linea", "[GIT] Código actualizado correctamente.\n"))
+                resultado = "ok"
+            else:
+                self.cola.put((
+                    "linea",
+                    "\n[GIT] Hubo conflictos o cambios locales que no se pudieron integrar solos.\n",
+                ))
+                resultado = "conflicto"
+        self.cola.put(("git_fin", resultado))
+
+    def _finalizar_git(self, resultado: str) -> None:
+        self._en_git = False
+        self.btn_ejecutar.configure(state=tk.NORMAL)
+        self.btn_git.configure(state=tk.NORMAL)
+        if resultado == "ok":
+            self.var_estado.set("Código actualizado")
+        elif resultado == "no_repo":
+            self.var_estado.set("No es un repositorio Git")
+        elif resultado == "no_remote":
+            self.var_estado.set("No hay remoto configurado")
+        elif resultado == "conflicto":
+            self.var_estado.set("Conflicto: revisar cambios locales")
+        else:
+            self.var_estado.set("Error al actualizar")
+        self._append_log("[GIT] Fin de la actualización.\n")
 
     def _al_cerrar(self) -> None:
         if self.proc is not None and self.proc.poll() is None:

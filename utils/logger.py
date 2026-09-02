@@ -1,10 +1,17 @@
 import logging
 import os
+import sys
 from datetime import datetime
 
 _log_dir = None
 _archivo_log = None
 _file_handler = None
+
+
+def _directorio_logs() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "logs")
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 
 
 def _obtener_file_handler():
@@ -17,7 +24,7 @@ def _obtener_file_handler():
     if _file_handler is not None:
         return _file_handler
 
-    _log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    _log_dir = _directorio_logs()
     os.makedirs(_log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     _archivo_log = os.path.join(_log_dir, f"ejecucion_{timestamp}.log")
