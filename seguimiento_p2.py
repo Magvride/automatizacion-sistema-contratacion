@@ -17,6 +17,7 @@ PATRON_CONTRATOS = "contratos_*.xlsx"
 
 ARCHIVO_MATRIZ = MATRIZ_MANUAL_DIR / "Matriz Seguimiento Contractual UIS.xlsx"
 ARCHIVO_SALIDA = MATRIZ_ACTUALIZADA_DIR / "Matriz Seguimiento Contractual UIS_actualizada.xlsx"
+ARCHIVO_NUEVOS = MATRIZ_ACTUALIZADA_DIR / "nuevos_contratos.csv"
 
 HOJA_MAESTRO = "MAESTRO"
 HOJA_SEGUIMIENTO = "SEGUIMIENTO"
@@ -24,6 +25,14 @@ HOJA_SEGUIMIENTO = "SEGUIMIENTO"
 # En el archivo descargado de la UIS los encabezados están en la fila 4
 FILA_ENCABEZADOS_ORIGEN = 4
 PRIMERA_FILA_DATOS_ORIGEN = 5
+
+# Columnas que exporta la matriz para alimentar el bloque UISARD/Alfresco.
+# (nombre de encabezado normalizado en MAESTRO -> nombre final en el CSV)
+COLUMNAS_EXPORTE = {
+    "CONTRATO": "contrato",
+    "CENTRO DE COSTO": "centro_costo",
+    "ORDENADOR DE GASTO CENTRO DE COSTO": "ordenador",
+}
 
 
 def buscar_archivo_contratos():
@@ -119,6 +128,15 @@ def siguiente_numero_maestro(ws_maestro):
             pass
 
     return ultimo + 1
+
+
+def valores_exporte(ws_maestro, fila, encabezados_maestro):
+    """Extrae de una fila de MAESTRO las columnas que alimentan el bloque UISARD/Alfresco."""
+    exporte = {}
+    for encabezado, destino in COLUMNAS_EXPORTE.items():
+        columna = encabezados_maestro.get(encabezado)
+        exporte[destino] = ws_maestro.cell(fila, columna).value if columna else None
+    return exporte
 
 
 def main():
@@ -227,7 +245,11 @@ def main():
                     fila_origen, columna_origen
                 ).value
 
-        contratos_agregados.append({"fila_maestro": fila_destino, "contrato": contrato})
+        contratos_agregados.append({
+            "fila_maestro": fila_destino,
+            "contrato": contrato,
+            "exporte": valores_exporte(ws_maestro, fila_destino, encabezados_maestro),
+        })
 
         contratos_existentes.add(contrato_texto)
         siguiente_fila_maestro += 1
@@ -310,6 +332,18 @@ def main():
     # 5. GUARDAR RESULTADO
     # ---------------------------------------------------------
     wb_matriz.save(ARCHIVO_SALIDA)
+
+    # Exporta solo los contratos nuevos del día (los que no estaban en el MAESTRO),
+    # para que el bloque UISARD/Alfresco verifique únicamente las incorporaciones de hoy.
+    if contratos_agregados:
+        import pandas as pd
+
+        df_nuevos = pd.DataFrame([nuevo["exporte"] for nuevo in contratos_agregados])
+        df_nuevos.to_csv(ARCHIVO_NUEVOS, index=False, encoding="utf-8-sig")
+        print(f"Contratos nuevos exportados a UISARD: {len(df_nuevos)} -> {ARCHIVO_NUEVOS}")
+    elif ARCHIVO_NUEVOS.exists():
+        ARCHIVO_NUEVOS.unlink()
+        print("[+] Sin contratos nuevos hoy; se limpia el exporte de nuevos contratos.")
 
     print("=" * 60)
     print("PROCESO TERMINADO")
