@@ -1,0 +1,119 @@
+# -*- coding: utf-8 -*-
+"""
+FASE 2.5 — Unificación.
+
+Une el bloque propio (contratos del sistema Financiero UIS, ``contratos_normalizados.csv``)
+con el bloque UISARD (``conciliacion_datos.csv``) usando el número de contrato como clave.
+
+El bloque propio deja la columna ``uisard`` (y ``correo_ordenador``) vacía; esta fase las
+completa cuando el contrato existe en UISARD y adjunta la ruta del expediente
+(NOMBRE EXPEDIENTE, UAA, SERIE, SUB-SERIE) que la FASE 3 (Alfresco) necesita para verificar.
+
+Este módulo es parte del flujo. Se ejecuta desde ``main.py``:
+    python main.py
+"""
+
+import os
+import re
+
+import pandas as pd
+
+from config import EXTRACCION_DIR
+from utils.logger import configurar_logger
+
+logger = configurar_logger("unificacion")
+
+# Columnas del expediente que llegan desde UISARD.
+COLUMNAS_UISARD = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
+
+
+def _clave_contrato(valor):
+    """Extrae el número puro de contrato (último bloque de dígitos) de cualquier formato.
+
+    Los prefijos difieren entre sistemas (Financiero: '270-2026000050'; UISARD:
+    '20-2026000322'), por eso se descarta el prefijo y se conserva solo el número.
+    """
+    if valor is None:
+        return ""
+    texto = str(valor).strip()
+    if not texto or texto.lower() == "nan":
+        return ""
+    digitos = re.findall(r"\d+", texto)
+    return digitos[-1] if digitos else ""
+
+
+def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
+    """Convierte todo a texto y convierte NaNs en "" para facilitar la unión."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    for col in df.columns:
+        df[col] = df[col].fillna("").astype(str).str.strip()
+    return df.fillna("")
+
+
+def _buscar_csv_propio() -> str:
+    """Devuelve la ruta del CSV de contratos normalizados más reciente."""
+    archivos = sorted(EXTRACCION_DIR.glob("contratos_normalizados*.csv"))
+    if not archivos:
+        return ""
+    return str(max(archivos, key=lambda a: a.stat().st_mtime))
+
+
+def unir_consolidados(ruta_base: str, df_uisard: pd.DataFrame, ruta_salida: str) -> dict:
+    """Une los contratos del sistema Financiero con los datos UISARD (indicador + ruta).
+
+    Devuelve un dict con estado: ``ruta`` (CSV generado), ``total``, ``con_uisard``,
+    ``sin_uisard`` y ``encontrado`` (False si no se localizó el CSV base).
+    """
+    if not ruta_base or not os.path.isfile(ruta_base):
+        logger.warning("No se encontró %s: no hay CSV del bloque propio para unir.", ruta_base)
+        return {"ruta": "", "total": 0, "con_uisard": 0, "sin_uisard": 0, "encontrado": False}
+
+    base = _normalizar(pd.read_csv(ruta_base, encoding="utf-8-sig", dtype=str))
+    uis = _normalizar(df_uisard)
+
+    if base.empty:
+        return {"ruta": "", "total": 0, "con_uisard": 0, "sin_uisard": 0, "encontrado": False}
+
+    base["_clave"] = base["contrato"].map(_clave_contrato)
+
+    columnas_uis = [c for c in COLUMNAS_UISARD if c in uis.columns]
+    uis_import = uis[columnas_uis].copy()
+    uis_import["_clave"] = uis_import["NÚMERO CONTRATO"].map(_clave_contrato)
+
+    merged = base.merge(uis_import, on="_clave", how="left")
+    merged = merged.fillna("")
+
+    # Indicador de presencia en UISARD (rellena la columna que el bloque propio dejó vacía).
+    if "NOMBRE EXPEDIENTE" in merged.columns:
+        merged["uisard"] = merged["NOMBRE EXPEDIENTE"].map(lambda v: "SI" if str(v).strip() else "NO")
+    merged.drop(columns=["_clave"], inplace=True)
+
+    con_uisard = int((merged["uisard"] == "SI").sum())
+    sin_uisard = int((merged["uisard"] == "NO").sum())
+
+    os.makedirs(os.path.dirname(ruta_salida) or ".", exist_ok=True)
+    merged.to_csv(ruta_salida, index=False, encoding="utf-8-sig")
+    logger.info(
+        "Unificación: %d contratos (%d con expediente UISARD | %d sin UISARD) -> %s",
+        len(merged), con_uisard, sin_uisard, ruta_salida,
+    )
+    return {
+        "ruta": ruta_salida,
+        "total": len(merged),
+        "con_uisard": con_uisard,
+        "sin_uisard": sin_uisard,
+        "encontrado": True,
+    }
+
+
+def main():
+    # Rechaza la ejecución directa: el flujo debe pasar por main.py.
+    print("Este script forma parte del flujo. Ejecuta: python main.py")
+    import sys
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

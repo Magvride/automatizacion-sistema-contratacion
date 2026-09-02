@@ -7,7 +7,7 @@ Todas las entradas y salidas del flujo se guardan dentro de `archivos/`:
 | `reportes_demo/` | Reportes demo o reportes descargados por `uisard_extractor.py`. |
 | `contratos_uis/` | Excel descargado por `uis_login_p1.py`. |
 | `matriz_manual/` | Entrada manual. Aquí debe colocarse `Matriz Seguimiento Contractual UIS.xlsx`. |
-| `matriz_actualizada/` | Salida de `seguimiento_p2.py`. |
+| `matriz_actualizada/` | Salida de `seguimiento_p2.py` (matriz + `nuevos_contratos.csv`). |
 | `extraccion_csv/` | CSV generado por `extraccion_p21.py`. |
 | `resultados/` | Consolidado y resultados de la parte UISARD/Alfresco. |
 
@@ -22,5 +22,14 @@ Para ejecutar el flujo completo, coloca primero la matriz manual en su carpeta y
 ```text
 python main.py
 ```
+
+El orquestador `main.py` encadena de forma secuencial:
+
+1. **Bloque propio (Financiero UIS):**
+   `uis_login_p1` → `seguimiento_p2` (guarda en `matriz_actualizada/nuevos_contratos.csv` solo los contratos nuevos del día) → `extraccion_p21` (`archivos/extraccion_csv/contratos_normalizados.csv`).
+2. **FASE 1 — UISARD:** descarga reportes por serie a `archivos/reportes_demo/`.
+3. **FASE 2 — Conciliación:** `conciliacion_datos.py` genera `archivos/resultados/conciliacion_datos.csv`.
+4. **FASE 2.5 — Unificación:** `unificar_expedientes.py` une los contratos del bloque propio con los datos UISARD por número de contrato y genera `archivos/resultados/contratos_unificados.csv` (rellena las columnas `uisard` y adjunta `NOMBRE EXPEDIENTE`/`UAA`/`SERIE`/`SUB-SERIE`).
+5. **FASE 3 — Alfresco:** `alfresco_extractor.py` verifica el CSV unido y guarda `verificacion_alfresco.csv` y `verificacion_alfresco_pasos.csv`.
 
 Las credenciales de `uis_login_p1.py` se leen desde `UIS_LOGIN_USER`/`UIS_LOGIN_PASS` del `.env`. Si no existen, usa `UISARD_USER`/`UISARD_PASS`.

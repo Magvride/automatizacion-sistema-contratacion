@@ -22,7 +22,6 @@ REGLAS = [
     ("logs", "ejecucion_*.log", 5, "logs de ejecución"),
     ("logs/diagnostico", "*.html", 10, "HTML de diagnóstico"),
     ("logs/screenshots", "*.png", 10, "capturas de pantalla"),
-    ("archivos/resultados", "consolidado_uisard_*.xlsx", 3, "consolidados con marca de tiempo"),
 ]
 
 
