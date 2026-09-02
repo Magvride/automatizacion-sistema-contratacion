@@ -1,22 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-Orquestador del flujo UISARD → Conciliación → Alfresco.
-
-Un solo comando encadena las 3 fases, compartiendo un único consolidado
-(`output/conciliacion_datos.csv`), y al terminar purga automáticamente los
-archivos más antiguos (logs, diagnósticos, screenshots y reportes viejos).
-
-Uso:
-    python main.py                                # flujo completo
-    python main.py --skip-uisard                  # reutilizar consolidado previo
-    python main.py --skip-alfresco                # sin verificación en Alfresco
-    python main.py --ruta-consolidado ruta.csv    # usar un consolidado externo
-"""
+"""Orquestador único del flujo propio y del flujo UISARD/Alfresco."""
 
 import argparse
+import builtins
 import os
 import sys
-import shutil
+import traceback
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -32,6 +21,7 @@ from uisard_extractor import UISARDExtractor
 from conciliacion_datos import generar_consolidado
 from alfresco_extractor import AlfrescoExtractor
 from utils.limpieza import limpiar
+from config import REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -46,13 +36,51 @@ def getenv(clave: str, requerido: bool = False) -> str:
 
 
 def construir_salidas(base_dir: str) -> dict:
-    carpeta = os.path.join(base_dir, "output")
-    os.makedirs(carpeta, exist_ok=True)
+    carpeta = str(RESULTADOS_DIR)
+    preparar_directorios()
     return {
         "carpeta": carpeta,
-        "reportes": os.path.join(base_dir, "reportes_demo"),
+        "reportes": str(REPORTES_DIR),
         "csv": os.path.join(carpeta, "conciliacion_datos.csv"),
     }
+
+
+# ----------------------------------------------------------------------
+# BLOQUE PROPIO: Financiero UIS -> matriz -> CSV
+# ----------------------------------------------------------------------
+def paso_login_financiero() -> None:
+    """Descarga el Excel y omite únicamente la pausa final de cierre."""
+    import uis_login_p1
+
+    original_input = builtins.input
+
+    def input_del_flujo(prompt=""):
+        if str(prompt) == "":
+            print("[main] Pausa final omitida; cerrando navegador automáticamente.")
+            return ""
+        return original_input(prompt)
+
+    builtins.input = input_del_flujo
+    try:
+        print("[MAIN] Paso 1/6: login y descarga del reporte financiero")
+        uis_login_p1.main()
+    finally:
+        builtins.input = original_input
+
+
+def ejecutar_bloque_propio(args) -> None:
+    import extraccion_p21
+    import seguimiento_p2
+
+    if args.skip_financiero:
+        logger.info("--skip-financiero: se omite el bloque propio.")
+        return
+
+    paso_login_financiero()
+    print("[MAIN] Paso 2/6: actualización de la matriz de seguimiento")
+    seguimiento_p2.main()
+    print("[MAIN] Paso 3/6: extracción del CSV normalizado")
+    extraccion_p21.main()
 
 
 # ----------------------------------------------------------------------
@@ -78,7 +106,7 @@ def fase_uisard(args) -> None:
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
     )
-    # Descarga los reportes por serie a reportes_demo/ (alimenta la FASE 2).
+    # Descarga los reportes por serie a archivos/reportes_demo/ (alimenta la FASE 2).
     extractor.ejecutar_extraccion()
 
 
@@ -183,7 +211,12 @@ def fase_alfresco(args, salidas: dict) -> None:
 
 def parsear_argumentos() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Flujo UISARD → Conciliación → Alfresco."
+        description="Flujo Financiero UIS -> matriz -> CSV -> UISARD -> Alfresco."
+    )
+    parser.add_argument(
+        "--skip-financiero",
+        action="store_true",
+        help="Omitir login, matriz y CSV del bloque propio.",
     )
     parser.add_argument(
         "--reporte-nuevas",
@@ -227,15 +260,16 @@ def main():
     logger.info("Inicio de ejecución: %s", datetime.now().isoformat())
 
     try:
+        # Primero se ejecuta el bloque propio.
+        ejecutar_bloque_propio(args)
 
-        # FASE 1: Extracción UISARD
-        #fase_uisard(args)
-        # fase 2: Conciliación
+        # Después se ejecuta el bloque de la compañera.
+        logger.info("Inicio del bloque UISARD/Alfresco")
+        fase_uisard(args)
         df = fase_conciliacion(args, salidas)
         logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
-        #fase 3: Verificación Alfresco
         fase_alfresco(args, salidas)
-        logger.info("Proceso completado exitosamente.")
+        logger.info("Proceso completo: bloque propio y bloque UISARD/Alfresco finalizados.")
 
     except KeyboardInterrupt:
         logger.info("Proceso interrumpido por el usuario.")
@@ -246,7 +280,7 @@ def main():
         logger.critical("Error fatal en el proceso: %s", exc, exc_info=True)
         sys.exit(1)
     finally:
-        # Purga automática de archivos antiguos (logs, diagnósticos, screenshots, reportes).
+         # Purga automática de archivos antiguos (logs, diagnósticos y reportes).
         try:
             limpiar(BASE_DIR, serie=True)
         except Exception as exc:

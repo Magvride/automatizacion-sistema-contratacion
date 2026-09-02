@@ -24,6 +24,7 @@ from selenium.common.exceptions import (
 )
 
 from utils.logger import configurar_logger
+from config import REPORTES_DIR, RESULTADOS_DIR
 
 logger = configurar_logger("uisard")
 
@@ -61,7 +62,7 @@ class UISARDExtractor:
         self.download_dir = download_dir or tempfile.mkdtemp(prefix="uisard_dl_")
         self.runtime_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
         os.makedirs(self.runtime_dir, exist_ok=True)
-        self.reportes_dir = os.path.join(os.path.dirname(__file__), "reportes_demo")
+        self.reportes_dir = str(REPORTES_DIR)
         os.makedirs(self.reportes_dir, exist_ok=True)
         self.driver: Optional[webdriver.Chrome] = None
         self._workbook: Optional[pd.ExcelWriter] = None
@@ -484,7 +485,7 @@ def parsear_argumentos() -> argparse.Namespace:
 
 
 def construir_salidas(base_dir: str) -> dict:
-    carpeta = os.path.join(base_dir, "output")
+    carpeta = str(RESULTADOS_DIR)
     os.makedirs(carpeta, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return {

@@ -29,6 +29,7 @@ from selenium.common.exceptions import (
 )
 
 from utils.logger import configurar_logger
+from config import RESULTADOS_DIR
 
 logger = configurar_logger("alfresco")
 
@@ -1261,7 +1262,7 @@ class AlfrescoExtractor:
         ruta_resumen: Optional[str] = None,
     ) -> dict:
         if not ruta_pasos or not ruta_resumen:
-            carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+            carpeta = str(RESULTADOS_DIR)
             ruta_pasos = ruta_pasos or os.path.join(carpeta, "verificacion_alfresco_pasos.csv")
             ruta_resumen = ruta_resumen or os.path.join(carpeta, "verificacion_alfresco.csv")
         logger.info("Salida incremental: pasos=%s | resumen=%s", ruta_pasos, ruta_resumen)
@@ -1345,7 +1346,7 @@ def parsear_argumentos() -> argparse.Namespace:
         default=None,
         help=(
             "Ruta a un CSV con columnas 'NOMBRE EXPEDIENTE', 'UAA' y 'SERIE' "
-            "para verificar todas las rutas (ej. output/conciliacion_datos.csv)."
+            "para verificar todas las rutas (ej. archivos/resultados/conciliacion_datos.csv)."
         ),
     )
     parser.add_argument(
@@ -1397,7 +1398,7 @@ def main():
             print(f"RUTA_ENCONTRADA={encontrado}")
             sys.exit(0 if encontrado else 1)
         else:
-            ruta_csv = os.path.join(base_dir, "output", "conciliacion_datos.csv")
+            ruta_csv = str(RESULTADOS_DIR / "conciliacion_datos.csv")
             logger.info("Sin --csv: se usa el inicio por defecto %s", ruta_csv)
 
         if not os.path.isfile(ruta_csv):
@@ -1412,7 +1413,7 @@ def main():
             logger.error("No se obtuvieron resultados del CSV.")
             sys.exit(1)
 
-        output_dir = os.path.join(base_dir, "output")
+        output_dir = str(RESULTADOS_DIR)
         os.makedirs(output_dir, exist_ok=True)
         ruta_pasos = os.path.join(output_dir, "verificacion_alfresco_pasos.csv")
         ruta_resumen = os.path.join(output_dir, "verificacion_alfresco.csv")
