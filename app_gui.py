@@ -6,6 +6,7 @@ flujo (Financiero UIS → matriz → CSV → UISARD → Alfresco) se ejecuta de 
 automática. Ocupa la biblioteca estándar `tkinter` (sin dependencias extra).
 """
 
+import builtins
 import logging
 import os
 import queue
@@ -27,6 +28,80 @@ else:
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
 
 FORMATO_FECHA = "%Y-%m-%d"
+
+COLOR_VERDE_UIS = "#016937"
+COLOR_VERDE_OSCURO = "#004d29"
+COLOR_DORADO = "#d6a62e"
+COLOR_TEXTO = "#17352a"
+COLOR_SECUNDARIO = "#60756a"
+COLOR_BORDE = "#d9e4dd"
+COLOR_FONDO = "#ffffff"
+
+
+class _BotonRedondeado(tk.Canvas):
+    """Botón ligero con esquinas redondeadas y estados ttk compatibles."""
+
+    def __init__(self, parent, text, command, width=130, height=38,
+                 color=COLOR_VERDE_UIS, color_hover=COLOR_VERDE_OSCURO,
+                 **kwargs):
+        super().__init__(
+            parent, width=width, height=height, highlightthickness=0,
+            bd=0, relief=tk.FLAT, bg=COLOR_FONDO, **kwargs,
+        )
+        self._text = text
+        self._command = command
+        self._color = color
+        self._color_hover = color_hover
+        self._habilitado = True
+        self._dibujar()
+        self.bind("<Enter>", self._al_entrar)
+        self.bind("<Leave>", self._al_salir)
+        self.bind("<Button-1>", self._al_click)
+
+    def _dibujar(self, color=None):
+        self.delete("all")
+        color = color or self._color
+        ancho = int(self["width"])
+        alto = int(self["height"])
+        radio = min(11, alto // 2)
+        self.create_arc(0, 0, radio * 2, radio * 2, start=90, extent=90,
+                        fill=color, outline=color)
+        self.create_arc(ancho - radio * 2, 0, ancho, radio * 2, start=0,
+                        extent=90, fill=color, outline=color)
+        self.create_arc(0, alto - radio * 2, radio * 2, alto, start=180,
+                        extent=90, fill=color, outline=color)
+        self.create_arc(ancho - radio * 2, alto - radio * 2, ancho, alto,
+                        start=270, extent=90, fill=color, outline=color)
+        self.create_rectangle(radio, 0, ancho - radio, alto, fill=color,
+                              outline=color)
+        self.create_rectangle(0, radio, ancho, alto - radio, fill=color,
+                              outline=color)
+        self.create_text(
+            ancho // 2, alto // 2, text=self._text,
+            fill=COLOR_FONDO if self._habilitado else COLOR_SECUNDARIO,
+            font=("Segoe UI Semibold", 10),
+        )
+
+    def configure(self, **kwargs):
+        estado = kwargs.pop("state", None)
+        if estado is not None:
+            self._habilitado = estado != tk.DISABLED
+            self._dibujar(self._color if self._habilitado else COLOR_BORDE)
+        return super().configure(**kwargs)
+
+    config = configure
+
+    def _al_entrar(self, _event):
+        if self._habilitado:
+            self._dibujar(self._color_hover)
+
+    def _al_salir(self, _event):
+        if self._habilitado:
+            self._dibujar()
+
+    def _al_click(self, _event):
+        if self._habilitado:
+            self._command()
 
 
 def fecha_por_defecto() -> str:
@@ -83,12 +158,13 @@ class AppContratacion(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("Sistema de Contratación — Automatización")
-        self.geometry("880x640")
-        self.minsize(760, 560)
+        self.title("Sistema Automatizado de contrataciones")
+        self.geometry("900x660")
+        self.minsize(780, 580)
 
         self.proc: subprocess.Popen | None = None
         self.cola = queue.Queue()
+        self._entradas = queue.Queue()
         self._en_git = False
 
         self._estilo_ttk()
@@ -105,36 +181,30 @@ class AppContratacion(tk.Tk):
     # ------------------------------------------------------------------
     def _estilo_ttk(self) -> None:
         estilo = ttk.Style(self)
-        try:
-            estilo.theme_use("clam")
-        except tk.TclError:
-            pass
+        estilo.theme_use("clam")
 
-        self.configure(bg="#f5f6fa")
+        self.configure(bg=COLOR_FONDO)
 
         estilo.configure(".", font=("Segoe UI", 10))
-        estilo.configure("TFrame", background="#f5f6fa")
-        estilo.configure("TLabel", background="#f5f6fa", foreground="#1f2937")
+        estilo.configure("TFrame", background=COLOR_FONDO)
+        estilo.configure("TLabel", background=COLOR_FONDO, foreground=COLOR_TEXTO)
         estilo.configure(
-            "Header.TLabel", background="#1d4ed8", foreground="#ffffff",
-            font=("Segoe UI Semibold", 15), padding=12,
+            "Header.TLabel", background=COLOR_VERDE_UIS, foreground=COLOR_FONDO,
+            font=("Segoe UI Semibold", 17), padding=16,
         )
         estilo.configure(
-            "Title.TLabel", background="#f5f6fa", foreground="#1f2937",
-            font=("Segoe UI Semibold", 11),
-        )
-        estilo.configure("TButton", padding=(12, 6))
-        estilo.configure(
-            "Accent.TButton", background="#1d4ed8", foreground="#ffffff",
-            font=("Segoe UI Semibold", 12),
-        )
-        estilo.map("Accent.TButton", background=[("active", "#2563eb")])
-        estilo.configure(
-            "Danger.TButton", background="#dc2626", foreground="#ffffff",
+            "Title.TLabel", background=COLOR_FONDO, foreground=COLOR_VERDE_OSCURO,
             font=("Segoe UI Semibold", 10),
         )
-        estilo.map("Danger.TButton", background=[("active", "#ef4444")])
-        estilo.configure("TEntry", fieldbackground="#ffffff")
+        estilo.configure("TLabelframe", background=COLOR_FONDO,
+                         bordercolor=COLOR_BORDE, relief=tk.GROOVE)
+        estilo.configure("TLabelframe.Label", background=COLOR_FONDO,
+                         foreground=COLOR_VERDE_OSCURO,
+                         font=("Segoe UI Semibold", 10))
+        estilo.configure("TEntry", fieldbackground=COLOR_FONDO,
+                         foreground=COLOR_TEXTO, bordercolor=COLOR_BORDE,
+                         lightcolor=COLOR_VERDE_UIS, darkcolor=COLOR_BORDE,
+                         padding=6)
 
     # ------------------------------------------------------------------
     # Interfaz
@@ -143,7 +213,7 @@ class AppContratacion(tk.Tk):
         header = ttk.Frame(self, style="TFrame")
         header.pack(fill=tk.X)
         ttk.Label(
-            header, text="Sistema de Contratación — Automatización",
+            header, text="Sistema Automatizado de contrataciones",
             style="Header.TLabel", anchor="center",
         ).pack(fill=tk.X)
 
@@ -152,7 +222,7 @@ class AppContratacion(tk.Tk):
 
         # --- Rango de fechas ---
         marco_fechas = ttk.LabelFrame(
-            contenedor, text="  Rango de fechas  ", padding=14,
+            contenedor, text="  Rango de fechas  ", padding=16,
         )
         marco_fechas.pack(fill=tk.X)
 
@@ -174,28 +244,38 @@ class AppContratacion(tk.Tk):
         ).grid(row=0, column=4, sticky=tk.W, padx=(10, 0))
 
         ttk.Label(
-            marco_fechas, text="Nota: si se dejan en blanco, se usa el día anterior a la ejecución.",
-            foreground="#6b7280",
+            marco_fechas, text="Si se dejan en blanco, se utilizará el día anterior a la ejecución.",
+            foreground=COLOR_SECUNDARIO,
         ).pack(anchor=tk.W, pady=(10, 0))
 
         # --- Botonera ---
-        barra = ttk.Frame(contenedor, style="TFrame", padding=(0, 12, 0, 6))
+        barra = ttk.Frame(contenedor, style="TFrame", padding=(0, 16, 0, 8))
         barra.pack(fill=tk.X)
 
-        self.btn_ejecutar = ttk.Button(
-            barra, text="▶  Empezar", style="Accent.TButton",
-            command=self._ejecutar, width=18,
+        self.btn_ejecutar = _BotonRedondeado(
+            barra, text="Empezar", command=self._ejecutar,
+            width=126, height=38,
         )
         self.btn_ejecutar.pack(side=tk.LEFT)
 
-        self.btn_detener = ttk.Button(
-            barra, text="⏹  Detener", style="Danger.TButton",
-            command=self._detener, state=tk.DISABLED,
+        self.btn_detener = _BotonRedondeado(
+            barra, text="Detener", command=self._detener,
+            width=108, height=38, color="#a33a32", color_hover="#862d27",
         )
+        self.btn_detener.configure(state=tk.DISABLED)
         self.btn_detener.pack(side=tk.LEFT, padx=(8, 0))
 
-        self.btn_git = ttk.Button(
-            barra, text="🔄  Actualizar (git)", command=self._actualizar_codigo,
+        self.btn_continuar = _BotonRedondeado(
+            barra, text="Continuar", command=self._continuar,
+            width=112, height=38, color=COLOR_DORADO, color_hover="#b88920",
+        )
+        self.btn_continuar.configure(state=tk.DISABLED)
+        self.btn_continuar.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.btn_git = _BotonRedondeado(
+            barra, text="Actualizar código", command=self._actualizar_codigo,
+            width=150, height=38, color=COLOR_VERDE_OSCURO,
+            color_hover=COLOR_VERDE_UIS,
         )
         self.btn_git.pack(side=tk.LEFT, padx=(8, 0))
 
@@ -212,8 +292,10 @@ class AppContratacion(tk.Tk):
 
         self.txt_log = tk.Text(
             marco_log, wrap=tk.WORD, font=("Consolas", 9),
-            background="#111827", foreground="#e5e7eb",
-            insertbackground="#e5e7eb", relief=tk.FLAT,
+            background=COLOR_FONDO, foreground=COLOR_TEXTO,
+            insertbackground=COLOR_TEXTO, relief=tk.FLAT,
+            highlightthickness=1, highlightbackground=COLOR_BORDE,
+            highlightcolor=COLOR_VERDE_UIS, padx=12, pady=10,
             state=tk.DISABLED,
         )
         scroll = ttk.Scrollbar(marco_log, orient=tk.VERTICAL, command=self.txt_log.yview)
@@ -221,9 +303,13 @@ class AppContratacion(tk.Tk):
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.txt_log.pack(fill=tk.BOTH, expand=True)
 
-        self.txt_log.tag_configure("error", foreground="#f87171")
-        self.txt_log.tag_configure("aviso", foreground="#fbbf24")
-        self.txt_log.tag_configure("exito", foreground="#4ade80")
+        self.txt_log.tag_configure("error", foreground="#a33a32")
+        self.txt_log.tag_configure("aviso", foreground="#9a7413")
+        self.txt_log.tag_configure("exito", foreground=COLOR_VERDE_UIS)
+
+        # Permite confirmar el captcha o cualquier pausa manual sin necesitar
+        # una consola externa.
+        self.bind_all("<Return>", lambda _event: self._continuar())
 
     # ------------------------------------------------------------------
     # Comandos
@@ -272,6 +358,7 @@ class AppContratacion(tk.Tk):
         self.btn_ejecutar.configure(state=tk.DISABLED)
         self.var_estado.set("Ejecutando…")
         self._append_log("Ejecutando flujo de contratación…\n")
+        self.btn_continuar.configure(state=tk.NORMAL)
 
         if FROZEN:
             # Ejecución embebida (sin pythonw ni main.py en disco): correr en un hilo.
@@ -294,6 +381,7 @@ class AppContratacion(tk.Tk):
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -305,6 +393,7 @@ class AppContratacion(tk.Tk):
             self.var_estado.set("Error al iniciar")
             self.btn_ejecutar.configure(state=tk.NORMAL)
             self.btn_detener.configure(state=tk.DISABLED)
+            self.btn_continuar.configure(state=tk.DISABLED)
             return
         threading.Thread(target=self._leer_salida, args=(self.proc,), daemon=True).start()
 
@@ -329,9 +418,18 @@ class AppContratacion(tk.Tk):
 
         escritor = _ColaWriter(self.cola)
         viejo_out, viejo_err = sys.stdout, sys.stderr
+        viejo_input = builtins.input
         sys.stdout = escritor
         sys.stderr = escritor
         sys.argv = ["main.py"] + self._construir_argumentos()
+
+        def input_desde_gui(prompt=""):
+            if prompt:
+                self.cola.put(("linea", prompt))
+            self._entradas.get()
+            return ""
+
+        builtins.input = input_desde_gui
 
         codigo = 0
         try:
@@ -350,6 +448,7 @@ class AppContratacion(tk.Tk):
         finally:
             sys.stdout = viejo_out
             sys.stderr = viejo_err
+            builtins.input = viejo_input
 
         self.cola.put(("fin", codigo))
 
@@ -394,6 +493,7 @@ class AppContratacion(tk.Tk):
         self._en_proceso = False
         self.btn_ejecutar.configure(state=tk.NORMAL)
         self.btn_detener.configure(state=tk.DISABLED)
+        self.btn_continuar.configure(state=tk.DISABLED)
         if codigo == 0:
             self.var_estado.set("Proceso finalizado correctamente")
             self._append_log("Proceso finalizado con éxito.\n")
@@ -406,6 +506,23 @@ class AppContratacion(tk.Tk):
             self.proc.terminate()
             self._append_log("Detenido por el usuario.\n")
             self.var_estado.set("Proceso detenido")
+
+    def _continuar(self) -> None:
+        """Envía Enter al flujo cuando espera captcha o una pausa manual."""
+        if FROZEN:
+            if self._en_proceso:
+                self._entradas.put("")
+                self._append_log("[GUI] Enter enviado al proceso.\n")
+            return
+
+        if self.proc is None or self.proc.poll() is not None or self.proc.stdin is None:
+            return
+        try:
+            self.proc.stdin.write("\n")
+            self.proc.stdin.flush()
+            self._append_log("[GUI] Enter enviado al proceso.\n")
+        except (OSError, ValueError):
+            pass
 
     def _actualizar_codigo(self) -> None:
         if self.proc is not None or getattr(self, "_en_proceso", False) or self._en_git:
