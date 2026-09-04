@@ -6,6 +6,7 @@ flujo (Financiero UIS → matriz → CSV → UISARD → Alfresco) se ejecuta de 
 automática. Ocupa la biblioteca estándar `tkinter` (sin dependencias extra).
 """
 
+# comprobación
 import builtins
 import logging
 import os
@@ -19,8 +20,12 @@ from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-from config import (ruta_matriz_manual, ruta_ordenadores, configurar_rutas,
-                    restablecer_rutas)
+from config import (
+    ruta_matriz_manual,
+    ruta_ordenadores,
+    configurar_rutas,
+    restablecer_rutas,
+)
 
 FROZEN = getattr(sys, "frozen", False)
 
@@ -44,12 +49,26 @@ COLOR_FONDO = "#ffffff"
 class _BotonRedondeado(tk.Canvas):
     """Botón ligero con esquinas redondeadas y estados ttk compatibles."""
 
-    def __init__(self, parent, text, command, width=130, height=38,
-                 color=COLOR_VERDE_UIS, color_hover=COLOR_VERDE_OSCURO,
-                 **kwargs):
+    def __init__(
+        self,
+        parent,
+        text,
+        command,
+        width=130,
+        height=38,
+        color=COLOR_VERDE_UIS,
+        color_hover=COLOR_VERDE_OSCURO,
+        **kwargs,
+    ):
         super().__init__(
-            parent, width=width, height=height, highlightthickness=0,
-            bd=0, relief=tk.FLAT, bg=COLOR_FONDO, **kwargs,
+            parent,
+            width=width,
+            height=height,
+            highlightthickness=0,
+            bd=0,
+            relief=tk.FLAT,
+            bg=COLOR_FONDO,
+            **kwargs,
         )
         self._text = text
         self._command = command
@@ -67,20 +86,45 @@ class _BotonRedondeado(tk.Canvas):
         ancho = int(self["width"])
         alto = int(self["height"])
         radio = min(11, alto // 2)
-        self.create_arc(0, 0, radio * 2, radio * 2, start=90, extent=90,
-                        fill=color, outline=color)
-        self.create_arc(ancho - radio * 2, 0, ancho, radio * 2, start=0,
-                        extent=90, fill=color, outline=color)
-        self.create_arc(0, alto - radio * 2, radio * 2, alto, start=180,
-                        extent=90, fill=color, outline=color)
-        self.create_arc(ancho - radio * 2, alto - radio * 2, ancho, alto,
-                        start=270, extent=90, fill=color, outline=color)
-        self.create_rectangle(radio, 0, ancho - radio, alto, fill=color,
-                              outline=color)
-        self.create_rectangle(0, radio, ancho, alto - radio, fill=color,
-                              outline=color)
+        self.create_arc(
+            0, 0, radio * 2, radio * 2, start=90, extent=90, fill=color, outline=color
+        )
+        self.create_arc(
+            ancho - radio * 2,
+            0,
+            ancho,
+            radio * 2,
+            start=0,
+            extent=90,
+            fill=color,
+            outline=color,
+        )
+        self.create_arc(
+            0,
+            alto - radio * 2,
+            radio * 2,
+            alto,
+            start=180,
+            extent=90,
+            fill=color,
+            outline=color,
+        )
+        self.create_arc(
+            ancho - radio * 2,
+            alto - radio * 2,
+            ancho,
+            alto,
+            start=270,
+            extent=90,
+            fill=color,
+            outline=color,
+        )
+        self.create_rectangle(radio, 0, ancho - radio, alto, fill=color, outline=color)
+        self.create_rectangle(0, radio, ancho, alto - radio, fill=color, outline=color)
         self.create_text(
-            ancho // 2, alto // 2, text=self._text,
+            ancho // 2,
+            alto // 2,
+            text=self._text,
             fill=COLOR_FONDO if self._habilitado else COLOR_SECUNDARIO,
             font=("Segoe UI Semibold", 10),
         )
@@ -110,8 +154,16 @@ class _BotonRedondeado(tk.Canvas):
 class _TituloRedondeado(tk.Canvas):
     """Encabezado tipo pastilla: fondo verde redondeado que envuelve solo el texto."""
 
-    def __init__(self, parent, text, color=COLOR_VERDE_UIS, texto_color=COLOR_FONDO,
-                 alto=46, radio=23, **kwargs):
+    def __init__(
+        self,
+        parent,
+        text,
+        color=COLOR_VERDE_UIS,
+        texto_color=COLOR_FONDO,
+        alto=46,
+        radio=23,
+        **kwargs,
+    ):
         self._texto = text
         self._color_relleno = color
         self._color_texto = texto_color
@@ -120,9 +172,14 @@ class _TituloRedondeado(tk.Canvas):
         self._ancho_texto = self._medir_texto(text)
 
         super().__init__(
-            parent, width=self._ancho_texto + self._radio * 2 + 44,
-            height=alto, highlightthickness=0,
-            bd=0, relief=tk.FLAT, bg=COLOR_FONDO, **kwargs,
+            parent,
+            width=self._ancho_texto + self._radio * 2 + 44,
+            height=alto,
+            highlightthickness=0,
+            bd=0,
+            relief=tk.FLAT,
+            bg=COLOR_FONDO,
+            **kwargs,
         )
         self._dibujar()
 
@@ -137,18 +194,46 @@ class _TituloRedondeado(tk.Canvas):
         alto = int(self["height"])
         radio = min(self._radio, alto // 2)
         c = self._color_relleno
-        self.create_arc(0, 0, radio * 2, radio * 2, start=90, extent=90,
-                        fill=c, outline=c)
-        self.create_arc(ancho - radio * 2, 0, ancho, radio * 2, start=0,
-                        extent=90, fill=c, outline=c)
-        self.create_arc(0, alto - radio * 2, radio * 2, alto, start=180,
-                        extent=90, fill=c, outline=c)
-        self.create_arc(ancho - radio * 2, alto - radio * 2, ancho, alto,
-                        start=270, extent=90, fill=c, outline=c)
+        self.create_arc(
+            0, 0, radio * 2, radio * 2, start=90, extent=90, fill=c, outline=c
+        )
+        self.create_arc(
+            ancho - radio * 2,
+            0,
+            ancho,
+            radio * 2,
+            start=0,
+            extent=90,
+            fill=c,
+            outline=c,
+        )
+        self.create_arc(
+            0,
+            alto - radio * 2,
+            radio * 2,
+            alto,
+            start=180,
+            extent=90,
+            fill=c,
+            outline=c,
+        )
+        self.create_arc(
+            ancho - radio * 2,
+            alto - radio * 2,
+            ancho,
+            alto,
+            start=270,
+            extent=90,
+            fill=c,
+            outline=c,
+        )
         self.create_rectangle(radio, 0, ancho - radio, alto, fill=c, outline=c)
         self.create_rectangle(0, radio, ancho, alto - radio, fill=c, outline=c)
         self.create_text(
-            ancho // 2, alto // 2, text=self._texto, fill=self._color_texto,
+            ancho // 2,
+            alto // 2,
+            text=self._texto,
+            fill=self._color_texto,
             font=self._fuente,
         )
 
@@ -184,10 +269,12 @@ class _ColaLogHandler(logging.Handler):
     def __init__(self, cola, nombre_log_dir: str) -> None:
         super().__init__(level=logging.DEBUG)
         self.cola = cola
-        self.setFormatter(logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(module)s:%(lineno)d | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        self.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)-8s | %(module)s:%(lineno)d | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
         os.makedirs(nombre_log_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._archivo = os.path.join(nombre_log_dir, f"ejecucion_{timestamp}.log")
@@ -238,22 +325,39 @@ class AppContratacion(tk.Tk):
         estilo.configure("TFrame", background=COLOR_FONDO)
         estilo.configure("TLabel", background=COLOR_FONDO, foreground=COLOR_TEXTO)
         estilo.configure(
-            "Header.TLabel", background=COLOR_VERDE_UIS, foreground=COLOR_FONDO,
-            font=("Segoe UI Semibold", 17), padding=16,
+            "Header.TLabel",
+            background=COLOR_VERDE_UIS,
+            foreground=COLOR_FONDO,
+            font=("Segoe UI Semibold", 17),
+            padding=16,
         )
         estilo.configure(
-            "Title.TLabel", background=COLOR_FONDO, foreground=COLOR_VERDE_OSCURO,
+            "Title.TLabel",
+            background=COLOR_FONDO,
+            foreground=COLOR_VERDE_OSCURO,
             font=("Segoe UI Semibold", 10),
         )
-        estilo.configure("TLabelframe", background=COLOR_FONDO,
-                         bordercolor=COLOR_BORDE, relief=tk.GROOVE)
-        estilo.configure("TLabelframe.Label", background=COLOR_FONDO,
-                         foreground=COLOR_VERDE_OSCURO,
-                         font=("Segoe UI Semibold", 10))
-        estilo.configure("TEntry", fieldbackground=COLOR_FONDO,
-                         foreground=COLOR_TEXTO, bordercolor=COLOR_BORDE,
-                         lightcolor=COLOR_VERDE_UIS, darkcolor=COLOR_BORDE,
-                         padding=6)
+        estilo.configure(
+            "TLabelframe",
+            background=COLOR_FONDO,
+            bordercolor=COLOR_BORDE,
+            relief=tk.GROOVE,
+        )
+        estilo.configure(
+            "TLabelframe.Label",
+            background=COLOR_FONDO,
+            foreground=COLOR_VERDE_OSCURO,
+            font=("Segoe UI Semibold", 10),
+        )
+        estilo.configure(
+            "TEntry",
+            fieldbackground=COLOR_FONDO,
+            foreground=COLOR_TEXTO,
+            bordercolor=COLOR_BORDE,
+            lightcolor=COLOR_VERDE_UIS,
+            darkcolor=COLOR_BORDE,
+            padding=6,
+        )
 
     # ------------------------------------------------------------------
     # Interfaz
@@ -269,19 +373,30 @@ class AppContratacion(tk.Tk):
         # Empaquetamos primero los dos botones a los extremos y el título al
         # centro, con expand para que ocupe el espacio restante sin deformarse.
         self.btn_git = _BotonRedondeado(
-            barra_superior, text="↻", command=self._actualizar_codigo,
-            width=44, height=36, color=COLOR_VERDE_OSCURO, color_hover=COLOR_VERDE_UIS,
+            barra_superior,
+            text="↻",
+            command=self._actualizar_codigo,
+            width=44,
+            height=36,
+            color=COLOR_VERDE_OSCURO,
+            color_hover=COLOR_VERDE_UIS,
         )
         self.btn_git.pack(side=tk.RIGHT)
 
         self.btn_configuracion = _BotonRedondeado(
-            barra_superior, text="⚙", command=self._abrir_configuracion,
-            width=44, height=36, color=COLOR_VERDE_OSCURO, color_hover=COLOR_VERDE_UIS,
+            barra_superior,
+            text="⚙",
+            command=self._abrir_configuracion,
+            width=44,
+            height=36,
+            color=COLOR_VERDE_OSCURO,
+            color_hover=COLOR_VERDE_UIS,
         )
         self.btn_configuracion.pack(side=tk.LEFT)
 
         self.titulo = _TituloRedondeado(
-            barra_superior, text="Sistema Automatizado de contrataciones",
+            barra_superior,
+            text="Sistema Automatizado de contrataciones",
             alto=46,
         )
         self.titulo.pack(side=tk.LEFT, expand=True, anchor="center")
@@ -291,7 +406,9 @@ class AppContratacion(tk.Tk):
 
         # --- Rango de fechas ---
         marco_fechas = ttk.LabelFrame(
-            contenedor, text="  Rango de fechas  ", padding=16,
+            contenedor,
+            text="  Rango de fechas  ",
+            padding=16,
         )
         marco_fechas.pack(fill=tk.X)
 
@@ -301,19 +418,23 @@ class AppContratacion(tk.Tk):
         ttk.Label(grid, text="Desde:").grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
         self.var_fecha_inicio = tk.StringVar()
         ttk.Entry(grid, textvariable=self.var_fecha_inicio, width=12).grid(
-            row=0, column=1, sticky=tk.W)
+            row=0, column=1, sticky=tk.W
+        )
 
         ttk.Label(grid, text="Hasta:").grid(row=0, column=2, sticky=tk.W, padx=(20, 6))
         self.var_fecha_fin = tk.StringVar()
         ttk.Entry(grid, textvariable=self.var_fecha_fin, width=12).grid(
-            row=0, column=3, sticky=tk.W)
+            row=0, column=3, sticky=tk.W
+        )
 
         ttk.Label(
-            grid, text="Formato: AAAA-MM-DD",
+            grid,
+            text="Formato: AAAA-MM-DD",
         ).grid(row=0, column=4, sticky=tk.W, padx=(10, 0))
 
         ttk.Label(
-            marco_fechas, text="Si se dejan en blanco, se utilizará el día anterior a la ejecución.",
+            marco_fechas,
+            text="Si se dejan en blanco, se utilizará el día anterior a la ejecución.",
             foreground=COLOR_SECUNDARIO,
         ).pack(anchor=tk.W, pady=(10, 0))
 
@@ -322,45 +443,71 @@ class AppContratacion(tk.Tk):
         barra.pack(fill=tk.X)
 
         self.btn_ejecutar = _BotonRedondeado(
-            barra, text="Empezar", command=self._ejecutar,
-            width=126, height=38,
+            barra,
+            text="Empezar",
+            command=self._ejecutar,
+            width=126,
+            height=38,
         )
         self.btn_ejecutar.pack(side=tk.LEFT)
 
         self.btn_detener = _BotonRedondeado(
-            barra, text="Detener", command=self._detener,
-            width=108, height=38, color="#a33a32", color_hover="#862d27",
+            barra,
+            text="Detener",
+            command=self._detener,
+            width=108,
+            height=38,
+            color="#a33a32",
+            color_hover="#862d27",
         )
         self.btn_detener.configure(state=tk.DISABLED)
         self.btn_detener.pack(side=tk.LEFT, padx=(8, 0))
 
         self.btn_continuar = _BotonRedondeado(
-            barra, text="Continuar", command=self._continuar,
-            width=112, height=38, color=COLOR_DORADO, color_hover="#b88920",
+            barra,
+            text="Continuar",
+            command=self._continuar,
+            width=112,
+            height=38,
+            color=COLOR_DORADO,
+            color_hover="#b88920",
         )
         self.btn_continuar.configure(state=tk.DISABLED)
         self.btn_continuar.pack(side=tk.LEFT, padx=(8, 0))
 
         self.var_estado = tk.StringVar(value="")
         ttk.Label(
-            barra, textvariable=self.var_estado, style="Title.TLabel",
+            barra,
+            textvariable=self.var_estado,
+            style="Title.TLabel",
         ).pack(side=tk.RIGHT)
 
         # --- Log en vivo ---
         marco_log = ttk.LabelFrame(
-            contenedor, text="  Registro de ejecución  ", padding=8,
+            contenedor,
+            text="  Registro de ejecución  ",
+            padding=8,
         )
         marco_log.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
 
         self.txt_log = tk.Text(
-            marco_log, wrap=tk.WORD, font=("Consolas", 9),
-            background=COLOR_FONDO, foreground=COLOR_TEXTO,
-            insertbackground=COLOR_TEXTO, relief=tk.FLAT,
-            highlightthickness=1, highlightbackground=COLOR_BORDE,
-            highlightcolor=COLOR_VERDE_UIS, padx=12, pady=10,
+            marco_log,
+            wrap=tk.WORD,
+            font=("Consolas", 9),
+            background=COLOR_FONDO,
+            foreground=COLOR_TEXTO,
+            insertbackground=COLOR_TEXTO,
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=COLOR_BORDE,
+            highlightcolor=COLOR_VERDE_UIS,
+            padx=12,
+            pady=10,
             state=tk.DISABLED,
         )
-        scroll = ttk.Scrollbar(marco_log, orient=tk.VERTICAL, command=self.txt_log.yview)
+        scroll = ttk.Scrollbar(
+            marco_log, orient=tk.VERTICAL, command=self.txt_log.yview
+        )
         self.txt_log.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.txt_log.pack(fill=tk.BOTH, expand=True)
@@ -390,9 +537,11 @@ class AppContratacion(tk.Tk):
                     f"por ejemplo {fecha_por_defecto()}.",
                 )
                 return False
-        if (self.var_fecha_inicio.get().strip()
-                and self.var_fecha_fin.get().strip()
-                and self.var_fecha_inicio.get().strip() > self.var_fecha_fin.get().strip()):
+        if (
+            self.var_fecha_inicio.get().strip()
+            and self.var_fecha_fin.get().strip()
+            and self.var_fecha_inicio.get().strip() > self.var_fecha_fin.get().strip()
+        ):
             messagebox.showerror(
                 "Rango inválido",
                 "La fecha inicial no puede ser posterior a la fecha final.",
@@ -428,7 +577,10 @@ class AppContratacion(tk.Tk):
             command=self._seleccionar_ordenadores,
         )
         menu.add_separator()
-        menu.add_command(label="Restablecer rutas por defecto", command=self._restablecer_configuracion)
+        menu.add_command(
+            label="Restablecer rutas por defecto",
+            command=self._restablecer_configuracion,
+        )
 
         x = self.btn_configuracion.winfo_rootx()
         y = self.btn_configuracion.winfo_rooty() + self.btn_configuracion.winfo_height()
@@ -463,7 +615,9 @@ class AppContratacion(tk.Tk):
 
     def _restablecer_configuracion(self) -> None:
         restablecer_rutas()
-        self._append_log("[CONFIG] Rutas manuales restablecidas a los valores por defecto.\n")
+        self._append_log(
+            "[CONFIG] Rutas manuales restablecidas a los valores por defecto.\n"
+        )
         self.var_estado.set("Rutas manuales por defecto")
 
     def _ejecutar(self) -> None:
@@ -506,13 +660,17 @@ class AppContratacion(tk.Tk):
                 shell=False,
             )
         except OSError as exc:
-            messagebox.showerror("No se pudo iniciar", f"No se pudo lanzar el proceso:\n{exc}")
+            messagebox.showerror(
+                "No se pudo iniciar", f"No se pudo lanzar el proceso:\n{exc}"
+            )
             self.var_estado.set("Error al iniciar")
             self.btn_ejecutar.configure(state=tk.NORMAL)
             self.btn_detener.configure(state=tk.DISABLED)
             self.btn_continuar.configure(state=tk.DISABLED)
             return
-        threading.Thread(target=self._leer_salida, args=(self.proc,), daemon=True).start()
+        threading.Thread(
+            target=self._leer_salida, args=(self.proc,), daemon=True
+        ).start()
 
     def _configurar_loggers(self) -> None:
         """Redirige el logging de todos los módulos del flujo hacia la ventana y a un archivo."""
@@ -520,8 +678,14 @@ class AppContratacion(tk.Tk):
 
         handler = _ColaLogHandler(self.cola, os.path.join(BASE_DIR, "logs"))
         nombres = [
-            "main", "uisard", "conciliacion", "alfresco",
-            "notificacion", "unificacion", "limpieza", "uisard_alfresco",
+            "main",
+            "uisard",
+            "conciliacion",
+            "alfresco",
+            "notificacion",
+            "unificacion",
+            "limpieza",
+            "uisard_alfresco",
         ]
         for nombre in nombres:
             lg = logging.getLogger(nombre)
@@ -551,6 +715,7 @@ class AppContratacion(tk.Tk):
         codigo = 0
         try:
             import main
+
             main.main()
         except SystemExit as exc:
             codigo = exc.code if isinstance(exc.code, int) else 1
@@ -559,6 +724,7 @@ class AppContratacion(tk.Tk):
             codigo = 0
         except Exception as exc:
             import traceback
+
             self.cola.put(("linea", f"ERROR FATAL: {exc}\n"))
             self.cola.put(("linea", traceback.format_exc() + "\n"))
             codigo = 1
@@ -597,7 +763,15 @@ class AppContratacion(tk.Tk):
             etiqueta = "error"
         elif any(p in texto for p in ("WARN", "warn", "aviso", "Aviso")):
             etiqueta = "aviso"
-        elif any(p in texto for p in ("finalizado", "Proceso completo", "Verificación finalizada", "éxito")):
+        elif any(
+            p in texto
+            for p in (
+                "finalizado",
+                "Proceso completo",
+                "Verificación finalizada",
+                "éxito",
+            )
+        ):
             etiqueta = "exito"
         else:
             etiqueta = None
@@ -663,9 +837,13 @@ class AppContratacion(tk.Tk):
     def _ejecutar_git(self, git: str) -> None:
         def correr(args):
             proc = subprocess.Popen(
-                [git] + args, cwd=BASE_DIR,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
+                [git] + args,
+                cwd=BASE_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             for linea in proc.stdout:
                 linea = linea.rstrip()
@@ -678,7 +856,9 @@ class AppContratacion(tk.Tk):
             self.cola.put(("linea", "\n[GIT] La carpeta no es un repositorio Git.\n"))
             resultado = "no_repo"
         elif correr(["remote", "-v"]) != 0:
-            self.cola.put(("linea", "\n[GIT] El repositorio no tiene un remoto configurado.\n"))
+            self.cola.put(
+                ("linea", "\n[GIT] El repositorio no tiene un remoto configurado.\n")
+            )
             resultado = "no_remote"
         else:
             self.cola.put(("linea", "[GIT] Descargando referencias (git fetch)…\n"))
@@ -689,10 +869,12 @@ class AppContratacion(tk.Tk):
                 self.cola.put(("linea", "[GIT] Código actualizado correctamente.\n"))
                 resultado = "ok"
             else:
-                self.cola.put((
-                    "linea",
-                    "\n[GIT] Hubo conflictos o cambios locales que no se pudieron integrar solos.\n",
-                ))
+                self.cola.put(
+                    (
+                        "linea",
+                        "\n[GIT] Hubo conflictos o cambios locales que no se pudieron integrar solos.\n",
+                    )
+                )
                 resultado = "conflicto"
         self.cola.put(("git_fin", resultado))
 
