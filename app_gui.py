@@ -6,7 +6,6 @@ flujo (Financiero UIS → matriz → CSV → UISARD → Alfresco) se ejecuta de 
 automática. Ocupa la biblioteca estándar `tkinter` (sin dependencias extra).
 """
 
-# comprobación
 import builtins
 import logging
 import os
