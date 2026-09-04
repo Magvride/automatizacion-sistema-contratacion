@@ -31,7 +31,7 @@ python main.py --fecha-inicio 2026-08-01 --fecha-fin 2026-08-31
 
 Si no se indican fechas, tanto Financiero UIS como UISARD consultan únicamente el día anterior a la ejecución.
 
-También se puede iniciar el flujo desde la interfaz gráfica mediante `app_gui.py` o el ejecutable generado por `compilar_exe.bat`.
+También se puede iniciar el flujo desde la interfaz gráfica mediante `app_gui.py`.
 
 El orquestador `main.py` encadena de forma secuencial:
 
