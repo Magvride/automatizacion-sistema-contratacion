@@ -7,7 +7,6 @@ import time
 import shutil
 import pandas as pd
 from datetime import datetime, timedelta
-from datetime import datetime
 from typing import Optional
 
 from selenium import webdriver
@@ -24,6 +23,7 @@ from selenium.common.exceptions import (
 )
 
 from utils.logger import configurar_logger
+from config import REPORTES_DIR, RESULTADOS_DIR
 
 logger = configurar_logger("uisard")
 
@@ -32,9 +32,14 @@ class UISARDExtractor:
     """Extrae reportes de la plataforma UISARD en formato Excel."""
 
     RUTAS_NAVEGACION = {
-        "gestion_documental": (By.XPATH, "//aside//button[.//mat-icon[text()='folder_shared']]"),
-        "sistema_reportes": (By.XPATH,
-                             "//mat-tree-node[.//mat-label[@title='Sistema de reportes']]"),
+        "gestion_documental": (
+            By.XPATH,
+            "//aside//button[.//mat-icon[text()='folder_shared']]",
+        ),
+        "sistema_reportes": (
+            By.XPATH,
+            "//mat-tree-node[.//mat-label[@title='Sistema de reportes']]",
+        ),
     }
 
     COLUMNAS_OBJETIVO = [
@@ -59,9 +64,11 @@ class UISARDExtractor:
         self.fecha_fin = fecha_fin
         # Descarga del navegador a una carpeta temporal del sistema (se limpia sola).
         self.download_dir = download_dir or tempfile.mkdtemp(prefix="uisard_dl_")
-        self.runtime_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        self.runtime_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "logs"
+        )
         os.makedirs(self.runtime_dir, exist_ok=True)
-        self.reportes_dir = os.path.join(os.path.dirname(__file__), "reportes_demo")
+        self.reportes_dir = str(REPORTES_DIR)
         os.makedirs(self.reportes_dir, exist_ok=True)
         self.driver: Optional[webdriver.Chrome] = None
         self._workbook: Optional[pd.ExcelWriter] = None
@@ -114,7 +121,10 @@ class UISARDExtractor:
         try:
             campo_usuario = wait.until(
                 EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "input[formcontrolname='username'], input[name='username'], input[type='text']")
+                    (
+                        By.CSS_SELECTOR,
+                        "input[formcontrolname='username'], input[name='username'], input[type='text']",
+                    )
                 )
             )
             campo_usuario.clear()
@@ -122,7 +132,8 @@ class UISARDExtractor:
             time.sleep(self._human_pause())
 
             campo_contrasena = self.driver.find_element(
-                By.CSS_SELECTOR, "input[formcontrolname='password'], input[name='password'], input[type='password']"
+                By.CSS_SELECTOR,
+                "input[formcontrolname='password'], input[name='password'], input[type='password']",
             )
             campo_contrasena.clear()
             campo_contrasena.send_keys(self.contrasena)
@@ -136,7 +147,7 @@ class UISARDExtractor:
             logger.info("Autenticación exitosa para usuario: %s", self.usuario)
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Fallo en autenticación: %s", exc)
-            self._capturar_pantalla("error_login")
+
             raise
 
     def _cerrar_cookies(self):
@@ -144,8 +155,10 @@ class UISARDExtractor:
         try:
             btn_aceptar = wait.until(
                 EC.element_to_be_clickable(
-                    (By.XPATH,
-                     "//mat-dialog-container//button[.//span[contains(text(),'Aceptar todas')]]")
+                    (
+                        By.XPATH,
+                        "//mat-dialog-container//button[.//span[contains(text(),'Aceptar todas')]]",
+                    )
                 )
             )
             self._human_click(btn_aceptar)
@@ -161,11 +174,15 @@ class UISARDExtractor:
                     (By.CSS_SELECTOR, "button.mat-mdc-menu-trigger")
                 )
             )
-            rol_actual = btn_dropdown.find_element(By.CSS_SELECTOR, "span.text").text.strip()
+            rol_actual = btn_dropdown.find_element(
+                By.CSS_SELECTOR, "span.text"
+            ).text.strip()
             logger.info("Rol actual detectado: '%s'", rol_actual)
 
             if "analista" in rol_actual.lower():
-                logger.info("Ya se tiene el rol 'Analista de Contratación'. Se omite cambio.")
+                logger.info(
+                    "Ya se tiene el rol 'Analista de Contratación'. Se omite cambio."
+                )
                 return
 
             self._human_click(btn_dropdown)
@@ -188,8 +205,10 @@ class UISARDExtractor:
                     continue
 
             if opcion is None:
-                logger.error("No se encontró la opción 'Analista de Contratación' en el menú.")
-                self._capturar_pantalla("error_opcion_rol")
+                logger.error(
+                    "No se encontró la opción 'Analista de Contratación' en el menú."
+                )
+
                 return
 
             self._human_click(opcion)
@@ -197,7 +216,6 @@ class UISARDExtractor:
 
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error seleccionando rol: %s", exc)
-            self._capturar_pantalla("error_seleccion_rol")
 
     # ------------------------------------------------------------------
     #  Navegación
@@ -211,7 +229,7 @@ class UISARDExtractor:
             logger.debug("Menú '%s' clickeado.", clave)
         except (TimeoutException, ElementClickInterceptedException) as exc:
             logger.error("Error navegando a '%s': %s", clave, exc)
-            self._capturar_pantalla(f"error_nav_{clave}")
+
             raise
 
     def navegar_a_sistema_reportes(self):
@@ -238,15 +256,13 @@ class UISARDExtractor:
 
             opcion = wait.until(
                 EC.element_to_be_clickable(
-                    (By.XPATH,
-                     "//mat-option[.//span[contains(text(),'Expedientes')]]")
+                    (By.XPATH, "//mat-option[.//span[contains(text(),'Expedientes')]]")
                 )
             )
             self._human_click(opcion)
             logger.info("Tipo de reporte: Expedientes seleccionado.")
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error seleccionando tipo de reporte: %s", exc)
-            self._capturar_pantalla("error_tipo_reporte")
 
     def _aplicar_filtros(self):
         wait = WebDriverWait(self.driver, 15)
@@ -270,7 +286,7 @@ class UISARDExtractor:
             )
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error aplicando fechas: %s", exc)
-            self._capturar_pantalla("error_filtros")
+
             raise
 
     def _seleccionar_dia_calendario(self, fecha_iso: str):
@@ -280,8 +296,10 @@ class UISARDExtractor:
 
         boton_dia = wait.until(
             EC.element_to_be_clickable(
-                (By.XPATH,
-                 f"//mat-datepicker-content//button[.//span[contains(@class,'mat-calendar-body-cell-content') and normalize-space(text())='{dia}']]")
+                (
+                    By.XPATH,
+                    f"//mat-datepicker-content//button[.//span[contains(@class,'mat-calendar-body-cell-content') and normalize-space(text())='{dia}']]",
+                )
             )
         )
         self._human_click(boton_dia)
@@ -298,8 +316,10 @@ class UISARDExtractor:
 
             opcion = wait.until(
                 EC.element_to_be_clickable(
-                    (By.XPATH,
-                     f"//mat-option[contains(translate(., 'abcdefghijklmnopqrstuvwxyzáéíóú', 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚ'), '{serie.upper()}')]")
+                    (
+                        By.XPATH,
+                        f"//mat-option[contains(translate(., 'abcdefghijklmnopqrstuvwxyzáéíóú', 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚ'), '{serie.upper()}')]",
+                    )
                 )
             )
             self._human_click(opcion)
@@ -309,8 +329,7 @@ class UISARDExtractor:
 
             btn_generar = wait.until(
                 EC.element_to_be_clickable(
-                    (By.XPATH,
-                     "//button[.//span[contains(text(),'Generar reporte')]]")
+                    (By.XPATH, "//button[.//span[contains(text(),'Generar reporte')]]")
                 )
             )
             self._human_click(btn_generar)
@@ -319,14 +338,16 @@ class UISARDExtractor:
             return self._esperar_descarga(serie)
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Error descargando serie '%s': %s", serie, exc)
-            self._capturar_pantalla(f"error_descarga_{serie}")
+
             return None
 
     def _esperar_descarga(self, serie: str, timeout: int = 30) -> Optional[str]:
         extensiones = (".xlsx", ".xls", ".csv")
         archivos_previos = set(os.listdir(self.download_dir))
         chrome_default = os.path.join(os.path.expanduser("~"), "Downloads")
-        archivos_previos_default = set(os.listdir(chrome_default)) if os.path.isdir(chrome_default) else set()
+        archivos_previos_default = (
+            set(os.listdir(chrome_default)) if os.path.isdir(chrome_default) else set()
+        )
         inicio = time.time()
 
         logger.info("Buscando descarga para '%s' en: %s", serie, self.download_dir)
@@ -335,7 +356,9 @@ class UISARDExtractor:
             archivos_actuales = set(os.listdir(self.download_dir))
             nuevos = archivos_actuales - archivos_previos
             for nombre in nuevos:
-                if any(nombre.endswith(ext) for ext in extensiones) and not nombre.endswith(".crdownload"):
+                if any(
+                    nombre.endswith(ext) for ext in extensiones
+                ) and not nombre.endswith(".crdownload"):
                     ruta_origen = os.path.join(self.download_dir, nombre)
                     nombre_serie = self._nombre_archivo_serie(serie, nombre)
                     ruta_destino = os.path.join(self.reportes_dir, nombre_serie)
@@ -347,17 +370,26 @@ class UISARDExtractor:
                 archivos_default = set(os.listdir(chrome_default))
                 nuevos_default = archivos_default - archivos_previos_default
                 for nombre in nuevos_default:
-                    if any(nombre.endswith(ext) for ext in extensiones) and not nombre.endswith(".crdownload"):
+                    if any(
+                        nombre.endswith(ext) for ext in extensiones
+                    ) and not nombre.endswith(".crdownload"):
                         ruta_origen = os.path.join(chrome_default, nombre)
                         nombre_serie = self._nombre_archivo_serie(serie, nombre)
                         ruta_destino = os.path.join(self.reportes_dir, nombre_serie)
                         shutil.copy2(ruta_origen, ruta_destino)
-                        logger.info("Reporte '%s' copiado desde Downloads a: %s", serie, ruta_destino)
+                        logger.info(
+                            "Reporte '%s' copiado desde Downloads a: %s",
+                            serie,
+                            ruta_destino,
+                        )
                         return ruta_destino
 
             time.sleep(2)
 
-        logger.warning("Serie '%s': sin datos en el rango de fechas (no se generó descarga).", serie)
+        logger.warning(
+            "Serie '%s': sin datos en el rango de fechas (no se generó descarga).",
+            serie,
+        )
         return None
 
     def _nombre_archivo_serie(self, serie: str, nombre_original: str) -> str:
@@ -378,7 +410,9 @@ class UISARDExtractor:
         try:
             df = pd.read_excel(ruta, engine="openpyxl")
             df["Serie"] = serie
-            logger.info("Leído '%s': %d filas, %d columnas.", serie, len(df), len(df.columns))
+            logger.info(
+                "Leído '%s': %d filas, %d columnas.", serie, len(df), len(df.columns)
+            )
             logger.info("Columnas '%s': %s", serie, list(df.columns))
             return df
         except Exception as exc:
@@ -403,7 +437,9 @@ class UISARDExtractor:
             return pd.DataFrame()
 
         consolidado = pd.concat(dataframes, ignore_index=True)
-        columnas_disponibles = [c for c in self.COLUMNAS_OBJETIVO if c in consolidado.columns]
+        columnas_disponibles = [
+            c for c in self.COLUMNAS_OBJETIVO if c in consolidado.columns
+        ]
         logger.info("Columnas objetivo disponibles: %s", columnas_disponibles)
         logger.info("Total filas antes del filtro: %d", len(consolidado))
 
@@ -411,7 +447,9 @@ class UISARDExtractor:
         if "Nombre Expediente" in resultado.columns:
             antes = len(resultado)
             resultado.dropna(subset=["Nombre Expediente"], inplace=True)
-            logger.info("dropna(Nombre Expediente): %d → %d filas", antes, len(resultado))
+            logger.info(
+                "dropna(Nombre Expediente): %d → %d filas", antes, len(resultado)
+            )
         resultado.reset_index(drop=True, inplace=True)
 
         return resultado
@@ -421,7 +459,7 @@ class UISARDExtractor:
     # ------------------------------------------------------------------
     #  Diagnóstico
     # ------------------------------------------------------------------
-    def _guardar_html_diagnostico(self, nombre: str):
+    def __html_diagnostico(self, nombre: str):
         carpeta = os.path.join(self.runtime_dir, "diagnostico")
         os.makedirs(carpeta, exist_ok=True)
         ruta = os.path.join(carpeta, f"{nombre}_{int(time.time())}.html")
@@ -433,33 +471,25 @@ class UISARDExtractor:
             logger.warning("No se pudo guardar HTML de diagnóstico.")
 
     # ------------------------------------------------------------------
-    def _capturar_pantalla(self, nombre: str):
-        carpeta = os.path.join(self.runtime_dir, "screenshots")
-        os.makedirs(carpeta, exist_ok=True)
-        ruta = os.path.join(carpeta, f"{nombre}_{int(time.time())}.png")
-        try:
-            self.driver.save_screenshot(ruta)
-            logger.info("Screenshot guardado: %s", ruta)
-        except Exception:
-            logger.warning("No se pudo capturar pantalla.")
 
     def ejecutar_extraccion(self) -> pd.DataFrame:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
             self._cerrar_cookies()
-            self._guardar_html_diagnostico("post_login")
+
             self.seleccionar_rol_analista()
-            self._guardar_html_diagnostico("post_rol")
+
             self.navegar_a_sistema_reportes()
             self._seleccionar_tipo_reporte()
             return self.extraer_todas_series()
         except Exception as exc:
-            logger.critical("Fallo en la fase de extracción UISARD: %s", exc, exc_info=True)
+            logger.critical(
+                "Fallo en la fase de extracción UISARD: %s", exc, exc_info=True
+            )
             return pd.DataFrame()
         finally:
             self.cerrar()
-
 
 
 def parsear_argumentos() -> argparse.Namespace:
@@ -492,7 +522,7 @@ def parsear_argumentos() -> argparse.Namespace:
 
 
 def construir_salidas(base_dir: str) -> dict:
-    carpeta = os.path.join(base_dir, "output")
+    carpeta = str(RESULTADOS_DIR)
     os.makedirs(carpeta, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return {
@@ -514,14 +544,14 @@ def fase_uisard(args, salidas: dict) -> pd.DataFrame:
         logger.info("Omitiendo extracción. Cargando consolidado previo: %s", ruta)
         return pd.read_excel(ruta, engine="openpyxl")
 
-    hoy = datetime.now()
-    fecha_inicio = (hoy - timedelta(days=2)).strftime("%Y-%m-%d")
-    fecha_fin = (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
+    ayer = datetime.now() - timedelta(days=1)
+    fecha_inicio = ayer.strftime("%Y-%m-%d")
+    fecha_fin = ayer.strftime("%Y-%m-%d")
 
     extractor = UISARDExtractor(
         url=os.getenv("UISARD_URL", "https://gestion.uis.edu.co/auth/#/auth/login"),
-        usuario=os.getenv("UISARD_USER", "mariamos"),
-        contrasena=os.getenv("UISARD_PASS", ""),
+        usuario=os.getenv("UISARD_USER", "mariamos_no_encontrada"),
+        contrasena=os.getenv("UISARD_PASS", "lmHVKW9T"),
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
     )
