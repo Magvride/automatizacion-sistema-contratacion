@@ -9,6 +9,7 @@ archivos/matriz_actualizada/
 archivos/extraccion_csv/
 archivos/resultados/
 logs/
+output/
 __pycache__/
 *.pyc
 
