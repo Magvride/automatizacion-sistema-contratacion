@@ -2,10 +2,12 @@ import argparse
 import csv
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
 import random
+import zipfile
 from typing import Optional
 
 import pandas as pd
@@ -27,6 +29,7 @@ from selenium.common.exceptions import (
 )
 
 from utils.logger import configurar_logger
+from config import RESULTADOS_DIR
 
 logger = configurar_logger("alfresco")
 
@@ -41,6 +44,8 @@ class AlfrescoExtractor:
     REPOSITORIO_MENU = (By.XPATH, "//a[@href='/share/page/repository']")
     RAIZ_REPO_NOMBRE = "REPOSITORIO_UIS_0002"
     TRAZA = (By.CSS_SELECTOR, "span.ygtvlabel")
+    # Un expediente "coherente" es un nombre real con forma Numero_Sufijo (p.ej. 2025000159_9702).
+    REAL_EXPEDIENTE_RE = re.compile(r"^\d+_\d+")
 
     def __init__(
         self,
@@ -49,7 +54,8 @@ class AlfrescoExtractor:
         contrasena: str,
         download_dir: Optional[str] = None,
         rapido: bool = True,
-        timeout_busqueda: int = 8,
+        timeout_busqueda: int = 6,
+        descargar_zip: bool = True,
     ):
         self.url = url
         self.usuario = usuario
@@ -58,6 +64,12 @@ class AlfrescoExtractor:
         self.download_dir = download_dir or tempfile.mkdtemp(prefix="alfresco_dl_")
         self.rapido = rapido
         self.timeout_busqueda = timeout_busqueda
+        # Corroboración por ZIP: desactivable para correr rápido (--no-zip).
+        self.zip_verificacion = descargar_zip
+        # Carpeta donde se guardan los ZIPS de los expedientes corroborados.
+        self.archivo_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "output", "expedientes_verificados"
+        )
         self.runtime_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
         os.makedirs(self.runtime_dir, exist_ok=True)
         self.driver: Optional[webdriver.Chrome] = None
@@ -69,6 +81,7 @@ class AlfrescoExtractor:
         self._subserie_actual: Optional[tuple] = None
         self._serie_label: Optional[str] = None
         self._subserie_label: Optional[str] = None
+        self._doms_guardados: int = 0
         # Nodos ya expandidos con hijos cargados: evita re-descender/re-expandir
         # cuando se pasa de una subserie a otra de la misma UAA/serie.
         self._expandidos: set = set()
@@ -161,7 +174,6 @@ class AlfrescoExtractor:
             logger.info("Autenticación exitosa para usuario: %s", self.usuario)
         except (TimeoutException, NoSuchElementException) as exc:
             logger.error("Fallo en autenticación: %s", exc)
-            self._capturar_pantalla("error_login")
             raise
 
     # ------------------------------------------------------------------
@@ -322,8 +334,7 @@ class AlfrescoExtractor:
             )
         except TimeoutException as exc:
             logger.error("No se expandió el nodo '%s' a tiempo: %s", ruta[-1], exc)
-            self._guardar_html_diagnostico("error_expandir_nodo")
-            self._capturar_pantalla("error_expandir_nodo")
+
             raise
 
         return self._contenedor_hijos(self._bajar_por_ruta(ruta))
@@ -452,12 +463,15 @@ class AlfrescoExtractor:
 
     def _hay_resultado_busqueda(self, objetivo: str, uaa: Optional[str] = None,
                                 serie: Optional[str] = None):
-        """Devuelve la fila de resultado de búsqueda que coincide con ``objetivo``.
+        """Devuelve la fila de resultado de búsqueda que mejor coincide con ``objetivo``.
 
-        Confirma que el nombre del resultado contenga el objetivo y, si se
-        pasan ``uaa``/``serie``, que la ruta del resultado los incluya (evita
-        falsos positivos de carpetas homónimas en otra UAA).
+        Orden de preferencia (evitar falsos positivos y no perder casos reales):
+          1) Nombre + UAA + SERIE   -> ruta exacta.
+          2) Nombre + UAA           -> confianza alta.
+          3) Nombre solo            -> nombre casi único; se acepta y se alerta.
+        Devuelve la fila con mayor confianza, o None si ninguna menciona el objetivo.
         """
+        objetivo = self._normalizar_texto(objetivo)
         try:
             filas = self.driver.find_elements(
                 By.CSS_SELECTOR, "tr.alfresco-search-AlfSearchResult"
@@ -466,18 +480,47 @@ class AlfrescoExtractor:
                 filas = self.driver.find_elements(
                     By.XPATH, "//div[contains(@class,'alfresco-search-AlfSearchResult')]"
                 )
-            for fila in filas:
-                texto = self._normalizar_texto(fila.text)
-                if objetivo not in texto:
-                    continue
-                if uaa and uaa not in texto:
-                    continue
-                if serie and serie not in texto:
-                    continue
-                return fila
         except StaleElementReferenceException:
+            logger.warning("Búsqueda '%s': estado inestable al leer resultados.", objetivo)
             return None
-        return None
+
+        coincidentes = []  # (confianza, fila, texto)
+        for fila in filas:
+            try:
+                texto = self._normalizar_texto(fila.text)
+            except StaleElementReferenceException:
+                logger.warning("Búsqueda '%s': resultado caducó al leer su texto.", objetivo)
+                continue
+            if not objetivo or objetivo not in texto:
+                continue
+            if uaa and uaa in texto:
+                if serie and serie in texto:
+                    coincidentes.append((3, fila, texto))
+                else:
+                    coincidentes.append((2, fila, texto))
+            else:
+                coincidentes.append((1, fila, texto))
+
+        if not coincidentes:
+            return None
+
+        coincidentes.sort(key=lambda m: m[0], reverse=True)
+        nivel, fila_mejor, texto_mejor = coincidentes[0]
+        if nivel < 3:
+            distintos = {self._normalizar_texto(c[2]) for c in coincidentes}
+            if len(distintos) > 1:
+                logger.warning(
+                    "Búsqueda '%s': %d candidatos sin confirmar ruta (nivel %d) -> %s. "
+                    "Revisar posible homónimo.",
+                    objetivo, len(distintos), nivel, ", ".join(sorted(distintos)),
+                )
+            else:
+                logger.warning(
+                    "Búsqueda '%s': resultado no confirma UAA/SERIE (nivel %d) -> '%s'. "
+                    "Se acepta por ser nombre único.",
+                    objetivo, nivel, texto_mejor,
+                )
+        return fila_mejor
 
     def _abrir_resultado(self, fila):
         """Clica el enlace del resultado para abrir la carpeta/expediente."""
@@ -495,61 +538,288 @@ class AlfrescoExtractor:
         self._human_click(link)
         return True
 
-    def _carpeta_tiene_contenido(self, timeout: int = 12) -> bool:
-        """True si la carpeta abierta muestra al menos un fichero (h3.filename)."""
+    def _carpeta_tiene_contenido(self, timeout: int = 8) -> bool:
+        """True si la carpeta abierta muestra ficheros O subcarpetas."""
         wait = WebDriverWait(self.driver, timeout)
+        selectores = [
+            "//h3[contains(@class,'filename')]",
+            "//tr[contains(@class,'yui-dt-rec')]",
+            "//tr[contains(@class,'yui-dt-even')]",
+            "//tr[contains(@class,'yui-dt-odd')]",
+            "//div[contains(@class,'doclist')]//td[contains(@class,'name')]//a",
+            "//a[contains(@class,'filter-change')]",
+            "//a[contains(@class,'item-name')]",
+        ]
         try:
             return wait.until(
-                lambda _d: len(
-                    _d.find_elements(By.XPATH, "//h3[contains(@class,'filename')]")
-                ) > 0
+                lambda _d: any(_d.find_elements(By.XPATH, s) for s in selectores)
             )
         except TimeoutException:
             return False
 
-    def _buscar_expediente_por_busqueda(
-        self, expediente: str, uaa: Optional[str] = None, serie: Optional[str] = None,
-        timeout: int = 15,
-    ) -> bool:
-        """Fast path: busca el expediente en el buscador global de Alfresco.
+    def _guardar_dom_diagnostico(self, prefijo: str):
+        """Vuelca el HTML actual a logs/diagnostico/ (máx. 10 por corrida)."""
+        if self.driver is None:
+            return
+        if self._doms_guardados >= 10:
+            return
+        try:
+            html = self.driver.page_source
+        except (WebDriverException, StaleElementReferenceException) as exc:
+            logger.warning("No se pudo capturar el DOM para diagnóstico: %s", exc)
+            return
+        carpeta = os.path.join(self.runtime_dir, "diagnostico")
+        os.makedirs(carpeta, exist_ok=True)
+        nombre = f"alfresco_{prefijo}_{int(time.time() * 1000)}.html"
+        ruta = os.path.join(carpeta, nombre)
+        try:
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(html)
+            logger.info("DOM de diagnóstico guardado: %s", ruta)
+        except OSError as exc:
+            logger.warning("No se pudo guardar DOM de diagnóstico: %s", exc)
+        self._doms_guardados += 1
 
-        1) Escribe el nombre en la caja de búsqueda del header y pulsa Enter.
-        2) Espera al resultado (fila alfresco-search-AlfSearchResult) y lo cruzase
-           con la UAA/SERIE del CSV.
-        3) Abre la carpeta resultante y comprueba que tiene ficheros dentro.
-        """
-        objetivo = self._normalizar_texto(expediente)
+    # ------------------------------------------------------------------
+    #  Corroboración: dentro de la carpeta del expediente, usar la lista de
+    #  documentos para descargar todo como ZIP (Selecionar -> Tudo ->
+    #  Itens selecionados -> Baixar como zip) y guardarlo.
+    # ------------------------------------------------------------------
+    def _cerrar_menu(self):
+        """Cierra el menú desplegable si quedó abierto (restaura el estado)."""
+        try:
+            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+        except Exception:
+            pass
+
+    def _esperar_elemento(self, xpath: str, timeout: int = 12):
+        """Espera y devuelve el primer elemento visible que cumple ``xpath`` (o None)."""
         wait = WebDriverWait(self.driver, timeout)
         try:
-            caja = wait.until(
+            return wait.until(EC.visibility_of_element_located((By.XPATH, xpath)))
+        except TimeoutException:
+            return None
+
+    def _esperar_archivo_zip(self, antes: set, objetivo: str, timeout: int = 60) -> Optional[str]:
+        """Espera a que termine y aparezca el ZIP de la descarga (prefiere el del expediente)."""
+        fin = time.time() + timeout
+        while time.time() < fin:
+            try:
+                actual = set(os.listdir(self.download_dir))
+            except OSError:
+                time.sleep(1)
+                continue
+            nuevos = [f for f in actual if f not in antes]
+            if any(f.lower().endswith(".crdownload") for f in nuevos):
+                time.sleep(1)
+                continue
+            zips = [f for f in nuevos if f.lower().endswith(".zip")]
+            if zips:
+                candidato = next((f for f in zips if objetivo in f), None)
+                if candidato is None:
+                    candidato = max(zips, key=lambda f: os.path.getmtime(os.path.join(self.download_dir, f)))
+                return os.path.join(self.download_dir, candidato)
+            time.sleep(1)
+        return None
+
+    def _guardar_y_extraer(self, ruta_zip: str, objetivo: str) -> bool:
+        """Mueve el ZIP a <destino>/<expediente>/ y lo descomprime."""
+        try:
+            carpeta = os.path.join(self.archivo_dir, objetivo)
+            os.makedirs(carpeta, exist_ok=True)
+            destino_zip = os.path.join(carpeta, os.path.basename(ruta_zip))
+            shutil.move(ruta_zip, destino_zip)
+            with zipfile.ZipFile(destino_zip) as z:
+                z.extractall(carpeta)
+            n_items = sum(len(files) for _, _, files in os.walk(carpeta))
+            logger.info(
+                "Corroboración ZIP de '%s': %d ítems -> %s",
+                objetivo, n_items, carpeta,
+            )
+            return True
+        except (OSError, zipfile.BadZipFile) as exc:
+            logger.warning("Corroboración ZIP fallida al guardar/extraer '%s': %s", objetivo, exc)
+            return False
+
+    def _descargar_zip_en_carpeta(self, expediente: str) -> bool:
+        """Dentro de la carpeta abierta, selecciona todo y descarga el ZIP."""
+        objetivo = self._normalizar_texto(expediente)
+        try:
+            os.makedirs(self.download_dir, exist_ok=True)
+            antes = set(os.listdir(self.download_dir))
+        except OSError:
+            antes = set()
+
+        boton_select = self._esperar_elemento(
+            "//button[contains(@id,'fileSelect-button')]", timeout=15
+        )
+        if boton_select is None:
+            logger.warning("Corroboración ZIP: sin botón 'Selecionar' en '%s'.", expediente)
+            self._guardar_dom_diagnostico("sin_boton_selecionar")
+            return False
+        self._human_click(boton_select)
+
+        opc_todo = self._esperar_elemento("//span[contains(@class,'selectAll')]", timeout=8)
+        if opc_todo is None:
+            logger.warning("Corroboración ZIP: sin opción 'Tudo' para '%s'.", expediente)
+            self._cerrar_menu()
+            return False
+        self._human_click(opc_todo)
+
+        boton_items = self._esperar_elemento(
+            "//button[contains(@id,'selectedItems-button')]", timeout=8
+        )
+        if boton_items is None:
+            logger.warning("Corroboración ZIP: sin botón 'Itens selecionados' para '%s'.", expediente)
+            self._guardar_dom_diagnostico("sin_boton_items")
+            return False
+        self._human_click(boton_items)
+
+        opc_zip = self._esperar_elemento("//span[contains(@class,'onActionDownload')]", timeout=8)
+        if opc_zip is None:
+            logger.warning("Corroboración ZIP: sin opción 'Baixar como zip' para '%s'.", expediente)
+            self._cerrar_menu()
+            return False
+        self._human_click(opc_zip)
+
+        ruta_zip = self._esperar_archivo_zip(antes, objetivo)
+        if ruta_zip is None:
+            logger.warning("Corroboración ZIP: no llegó el archivo para '%s'.", expediente)
+            return False
+        return self._guardar_y_extraer(ruta_zip, objetivo)
+
+    def _escribir_busqueda(self, caja, objetivo: str) -> bool:
+        """Escribe el término en la caja de búsqueda de forma robusta (JS como respaldo)."""
+        try:
+            caja.clear()
+            caja.send_keys(objetivo)
+        except (ElementNotInteractableException, StaleElementReferenceException, WebDriverException) as exc:
+            logger.warning("Fast path: no se pudo escribir en la caja: %s", exc)
+            return False
+        time.sleep(0.2)
+        try:
+            if objetivo not in (caja.get_attribute("value") or ""):
+                self.driver.execute_script(
+                    "arguments[0].value = arguments[1];"
+                    "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));"
+                    "arguments[0].dispatchEvent(new Event('keydown',{key:'Enter',bubbles:true}));",
+                    caja, objetivo,
+                )
+                time.sleep(0.15)
+        except (StaleElementReferenceException, WebDriverException):
+            pass
+        return True
+
+    def _disparar_busqueda(self, caja, icono) -> bool:
+        """Dispara la búsqueda: clic en el icono de búsqueda o Enter."""
+        try:
+            if icono is not None:
+                self._human_click(icono)
+            else:
+                caja.send_keys(Keys.RETURN)
+            return True
+        except (ElementNotInteractableException, StaleElementReferenceException, WebDriverException) as exc:
+            logger.warning("Fast path: no se pudo disparar la búsqueda: %s", exc)
+            return False
+
+    def _candidatos_buscador(self) -> list:
+        """Devuelve los buscadores disponibles en orden de preferencia.
+
+        Orden: (1) caja estándar del header, (2) buscador dedicado de la página
+        de resultados (combobox searchTerm + icono blanco).
+        """
+        candidatos = []
+        # 1) Caja estándar del header (siempre presente en la barra superior).
+        try:
+            caja = WebDriverWait(self.driver, 1.0).until(
                 EC.presence_of_element_located(
                     (By.CSS_SELECTOR, "input#HEADER_SEARCHBOX_FORM_FIELD, input.alfresco-header-SearchBox-text")
                 )
             )
+            candidatos.append((caja, None, "header"))
         except TimeoutException:
-            logger.warning("Fast path: caja de búsqueda del header no disponible.")
-            return False
-
+            pass
+        # 2) Buscador dedicado de la página de resultados (disparo distinto).
         try:
-            caja.clear()
-            caja.send_keys(objetivo)
-            time.sleep(self._human_pause(250, 600))
-            caja.send_keys(Keys.RETURN)
-        except (ElementNotInteractableException, StaleElementReferenceException, WebDriverException) as exc:
-            logger.warning("Fast path: no se pudo escribir en la caja: %s", exc)
-            return False
-
-        try:
-            fila = wait.until(lambda _d: self._hay_resultado_busqueda(objetivo, uaa, serie))
+            caja = WebDriverWait(self.driver, 0.8).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "input[name='searchTerm']")
+                )
+            )
+            icono = None
+            try:
+                icono = WebDriverWait(self.driver, 1.5).until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, "//span[contains(@class,'alf-white-search-icon')]")
+                    )
+                )
+            except TimeoutException:
+                pass
+            candidatos.append((caja, icono, "searchTerm"))
         except TimeoutException:
-            logger.warning("Fast path: sin resultados para '%s'.", expediente)
-            return False
+            pass
+        return candidatos
 
-        if fila is None:
+    def _buscar_expediente_por_busqueda(
+        self, expediente: str, uaa: Optional[str] = None, serie: Optional[str] = None,
+        timeout: int = 6, intentos: int = 2,
+    ) -> bool:
+        """Fast path: busca el expediente probando los buscadores en orden.
+
+        1) Primero la caja del header (Enter); si no lo trae, luego el buscador
+           dedicado de la página de resultados (combobox searchTerm + icono).
+           Escribi el término de forma robusta (JS de respaldo si se pierde).
+        2) Espera el resultado con timeout corto; si un buscador no lo trae, prueba
+           el siguiente; si ninguno lo devuelve, no reintenta (ahorra tiempo) y cae
+           a la ruta manual del árbol.
+        3) Abre la carpeta y, si está activada la corroboración, descarga el ZIP.
+        """
+        objetivo = self._normalizar_texto(expediente)
+        for intento in range(intentos):
+            if intento > 0:
+                logger.info("Fast path: reintento %d para '%s'.", intento + 1, expediente)
+                self.navegar_al_repositorio()
+            candidatos = self._candidatos_buscador()
+            if not candidatos:
+                logger.warning("Fast path: sin caja de búsqueda (intento %d).", intento + 1)
+                if intento == intentos - 1:
+                    self._guardar_dom_diagnostico("buscador_no_disponible")
+                continue
+            encontrado = False
+            for caja, icono, etiqueta in candidatos:
+                logger.info("Fast path: buscando '%s' en '%s'.", expediente, etiqueta)
+                if not self._escribir_busqueda(caja, objetivo):
+                    continue
+                if not self._disparar_busqueda(caja, icono):
+                    continue
+                try:
+                    fila = WebDriverWait(self.driver, timeout).until(
+                        lambda _d: self._hay_resultado_busqueda(objetivo, uaa, serie)
+                    )
+                except TimeoutException:
+                    continue
+                if fila is None:
+                    continue
+                if not self._abrir_resultado(fila):
+                    logger.warning("Fast path: no se pudo abrir el resultado de '%s'.", expediente)
+                    continue
+                if not self._carpeta_tiene_contenido():
+                    logger.warning("Fast path: resultado '%s' sin contenido visible.", expediente)
+                    continue
+                if self.zip_verificacion and self._descargar_zip_en_carpeta(expediente):
+                    return True
+                logger.warning(
+                    "Fast path: '%s' verificado por contenido (ZIP %s).", expediente,
+                    "no disponible" if self.zip_verificacion else "desactivado",
+                )
+                encontrado = True
+                break
+            if encontrado:
+                return True
+            self._guardar_dom_diagnostico("sin_resultados")
             return False
-        if not self._abrir_resultado(fila):
-            return False
-        return self._carpeta_tiene_contenido()
+        return False
 
     def _candidatos_serie(self, uaa: str, serie: str) -> list:
         """Etiquetas probables de la SERIE en el árbol.
@@ -607,8 +877,6 @@ class AlfrescoExtractor:
             self._traza("REPOSITORIO", R, item_raiz is not None)
             if item_raiz is None:
                 logger.error("No se encontró el nodo raíz '%s'.", R)
-                self._guardar_html_diagnostico("no_encontro_raiz")
-                self._capturar_pantalla("no_encontro_raiz")
                 return None, None, False
             logger.info("Repositorio '%s' OK. Expandiendo...", R)
             self._expandir_nodo([R], pre_wait=10, timeout=20)
@@ -622,7 +890,7 @@ class AlfrescoExtractor:
             self._traza("UAA", uaa, item_uaa is not None)
             if item_uaa is None:
                 logger.warning("UAA '%s' no encontrada bajo la raíz.", uaa)
-                self._guardar_html_diagnostico("no_encontro_uaa")
+        
                 return None, None, False
             logger.info("UAA '%s' OK. Expandiendo...", uaa)
             self._expandir_nodo([R, uaa])
@@ -640,7 +908,7 @@ class AlfrescoExtractor:
         self._traza("SERIE", serie_label or serie, serie_label is not None)
         if serie_label is None:
             logger.warning("SERIE '%s' no encontrada bajo UAA '%s'.", serie, uaa)
-            self._guardar_html_diagnostico("no_encontro_serie")
+        
             return None, None, False
         if (R, uaa, serie_label) not in self._expandidos:
             logger.info("SERIE '%s' OK. Expandiendo...", serie_label)
@@ -657,7 +925,7 @@ class AlfrescoExtractor:
         self._traza("SUB-SERIE", subserie_label or subserie, subserie_label is not None)
         if subserie_label is None:
             logger.warning("SUB-SERIE '%s' no encontrada bajo SERIE '%s'.", subserie, serie_label)
-            self._guardar_html_diagnostico("no_encontro_subserie")
+        
             return None, None, False
 
         self._entrar_nodo([R, uaa, serie_label, subserie_label])
@@ -668,45 +936,25 @@ class AlfrescoExtractor:
         self._subserie_actual = (uaa, serie, subserie)
         return serie_label, subserie_label, True
 
-    def navegar_ruta(self, uaa: str, serie: str, subserie: str, expediente: Optional[str] = None) -> bool:
-        """Busca secuencialmente Repositorio -> UAA -> SERIE -> SUB-SERIE en el árbol.
+    def _navegar_arbol(self, uaa: str, serie: str, subserie: str, expediente: Optional[str] = None) -> bool:
+        """Ruta manual: Repositorio -> UAA -> SERIE -> SUB-SERIE y busca el expediente.
 
-        Si se proporciona ``expediente``, tras entrar en la subserie lo busca dentro
-        de la biblioteca de documentos y registra el hallazgo en
-        ``self.expediente_encontrado``.
-
-        Registra en self._ultima_traza cada nivel con su valor y si se localizó.
-        Devuelve True si llega y entra en la subserie; False en caso contrario.
+        Sin fast path. Registra cada nivel en ``self._ultima_traza`` y el hallazgo
+        del expediente en ``self.expediente_encontrado``. Devuelve True si llega y
+        entra a la subserie (aunque el expediente no esté dentro).
         """
         logger.info(
-            "Buscando ruta UAA='%s' | SERIE='%s' | SUB-SERIE='%s'",
+            "Ruta manual UAA='%s' | SERIE='%s' | SUB-SERIE='%s'",
             uaa, serie, subserie,
         )
         self._ultima_traza = []
 
-        # 0) Fast path: buscador global del header. Si aparece la carpeta, la abre
-        #    y se considera ENCONTRADO sin bajar por el árbol (ruta más larga).
-        if expediente:
-            if self._buscar_expediente_por_busqueda(expediente, uaa=uaa, serie=serie):
-                self.expediente_encontrado = True
-                self._traza("BUSQUEDA", expediente, True)
-                logger.info("Fast path: expediente '%s' localizado vía buscador global.", expediente)
-                return True
-            logger.warning(
-                "Fast path sin éxito para '%s'; se restaura el árbol y se usa la ruta oficial.",
-                expediente,
-            )
-            self._reset_navegacion()
-            self.navegar_al_repositorio()
-
-        # 1-4) Navegación con caché de ruta ya entrada (REPO -> UAA -> SERIE -> SUB-SERIE)
         serie_label, subserie_label, encontrado = self._navegar_hasta_subserie(
             uaa, serie, subserie
         )
         if not encontrado:
             return False
 
-        # 5) EXPEDIENTE dentro de la sub-serie
         self.expediente_encontrado = False
         if expediente:
             self.expediente_encontrado = self._buscar_expediente(expediente)
@@ -715,10 +963,32 @@ class AlfrescoExtractor:
                 logger.info("EXPEDIENTE '%s' encontrado dentro de la subserie '%s'.", expediente, subserie_label)
             else:
                 logger.warning("EXPEDIENTE '%s' no encontrado dentro de la subserie '%s'.", expediente, subserie_label)
-                self._guardar_html_diagnostico("no_encontro_expediente")
-                self._capturar_pantalla("no_encontro_expediente")
-
         return True
+
+    def navegar_ruta(self, uaa: str, serie: str, subserie: str, expediente: Optional[str] = None) -> bool:
+        """Verifica un registro: fast path (buscadores) y, como último recurso, la ruta manual.
+
+        Devuelve True si llega/entra en la subserie; el hallazgo del expediente queda
+        en ``self.expediente_encontrado``. Registra la traza en ``self._ultima_traza``.
+        """
+        logger.info(
+            "Buscando ruta UAA='%s' | SERIE='%s' | SUB-SERIE='%s'",
+            uaa, serie, subserie,
+        )
+        self._ultima_traza = []
+        if expediente:
+            if self._buscar_expediente_por_busqueda(expediente, uaa=uaa, serie=serie):
+                self.expediente_encontrado = True
+                self._traza("BUSQUEDA", expediente, True)
+                logger.info("Fast path: expediente '%s' localizado vía buscador global.", expediente)
+                return True
+            logger.warning(
+                "Fast path sin éxito para '%s'; se usa la ruta manual del árbol.",
+                expediente,
+            )
+            self._reset_navegacion()
+            self.navegar_al_repositorio()
+        return self._navegar_arbol(uaa, serie, subserie, expediente)
 
     def _traza(self, nivel: str, valor: str, encontrado: bool):
         self._ultima_traza.append({
@@ -732,9 +1002,9 @@ class AlfrescoExtractor:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-            self._guardar_html_diagnostico("post_login")
+          
             self.navegar_al_repositorio()
-            self._guardar_html_diagnostico("post_repositorio")
+
             return self.navegar_ruta(uaa, serie, nombre_expediente)
         except Exception as exc:
             logger.critical("Fallo en la navegación de ruta Alfresco: %s", exc, exc_info=True)
@@ -779,17 +1049,83 @@ class AlfrescoExtractor:
             return ""
         return str(valor).strip()
 
+    def _ruta_csv_aux(self, ruta_resumen: Optional[str], nombre: str) -> str:
+        """Deriva una ruta CSV auxiliar en la misma carpeta que el resumen."""
+        if ruta_resumen:
+            carpeta = os.path.dirname(ruta_resumen)
+        else:
+            carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        os.makedirs(carpeta, exist_ok=True)
+        return os.path.join(carpeta, nombre)
+
+    def _es_expediente_coherente(self, nombre: str) -> bool:
+        """True si el nombre parece un expediente real (Numero_Sufijo)."""
+        return bool(nombre and self.REAL_EXPEDIENTE_RE.match(nombre))
+
+    def _describir_anomalia(self, nombre: str, exp_found: bool) -> str:
+        """Describe qué puede estar pasando cuando el nombre no es un expediente coherente."""
+        if self._es_expediente_coherente(nombre):
+            return ""
+        base = (
+            "El nombre no corresponde a un expediente real (formato de carpeta de "
+            "prueba/obsoleta)"
+        )
+        if exp_found:
+            return (
+                base + ". En Alfresco existe una carpeta que coincide literalmente con "
+                "ese nombre; posible registro que debería depurarse del reporte."
+            )
+        return base + ". No se encontró en Alfresco; posible registro que debería depurarse del reporte."
+
+    def _registrar_resultado(self, nombre, uaa, serie, subserie, encontrado_ruta, pasos, resumen):
+        """Calcula el motivo y apila en ``resumen``/``pasos``.
+
+        Devuelve (fila_resumen, filas_paso, exp_found).
+        """
+        exp_found = self.expediente_encontrado and encontrado_ruta
+        if exp_found:
+            motivo = ""
+        elif not encontrado_ruta:
+            motivo = "carpeta_no_encontrada"
+        else:
+            motivo = "expediente_no_encontrado"
+
+        filas_paso = []
+        for paso in self._ultima_traza:
+            fila_paso = {
+                "NOMBRE EXPEDIENTE": nombre,
+                "UAA": uaa,
+                "SERIE": serie,
+                "SUB-SERIE": subserie,
+                **paso,
+            }
+            pasos.append(fila_paso)
+            filas_paso.append(fila_paso)
+
+        fila_resumen = {
+            "NOMBRE EXPEDIENTE": nombre,
+            "UAA": uaa,
+            "SERIE": serie,
+            "SUB-SERIE": subserie,
+            "MOTIVO": motivo,
+            "EXPEDIENTE_ENCONTRADO": "SI" if exp_found else "NO",
+            "DESCRIPCION": self._describir_anomalia(nombre, exp_found),
+        }
+        resumen.append(fila_resumen)
+        return fila_resumen, filas_paso, exp_found
+
     def verificar_expedientes_desde_csv(
         self,
         ruta_csv: str,
         ruta_pasos: Optional[str] = None,
         ruta_resumen: Optional[str] = None,
     ) -> dict:
-        """Recorre el CSV (NOMBRE EXPEDIENTE, UAA, SERIE) y navega a cada ruta.
+        """Verifica en dos fases: primero búsqueda (header + searchTerm), luego ruta manual.
 
-        Si se indican ``ruta_pasos`` y ``ruta_resumen``, los resultados se
-        escriben en disco de forma incremental (tras cada registro), de modo
-        que pueden monitorearse mientras corre y no se pierden si se interrumpe.
+        Fase 1 (búsqueda): recorre el CSV y busca cada expediente en los buscadores.
+        Los que la búsqueda no encuentra se guardan en ``reintento`` y se escriben a un
+        CSV auxiliar. Fase 2 (ruta manual): re-itera sobre ese subconjunto usando el
+        árbol (Repositorio -> UAA -> SERIE -> SUB-SERIE -> expediente).
         """
         try:
             df = pd.read_csv(ruta_csv, encoding="utf-8-sig")
@@ -799,32 +1135,29 @@ class AlfrescoExtractor:
 
         logger.info("CSV cargado: %d filas. Columnas: %s", len(df), list(df.columns))
 
-        # Agrupa las filas por ruta para que los expedientes de una misma subserie
-        # queden consecutivos y se reutilice la navegación ya expandida del árbol.
         claves = ["UAA", "SERIE"]
         if "SUBSERIE" in df.columns:
             claves.append("SUBSERIE")
         if "NOMBRE EXPEDIENTE" in df.columns and "NOMBRE EXPEDIENTE" not in claves:
             claves.append("NOMBRE EXPEDIENTE")
         df = df.sort_values(claves, kind="mergesort").reset_index(drop=True)
-        logger.info("CSV reordenado por ruta (UAA -> SERIE -> SUB-SERIE) para reutilizar nodos.")
+        logger.info("CSV reordenado por ruta (UAA -> SERIE -> SUB-SERIE).")
 
-        pasos = []  # filas apiladas: una por nivel recorrido de cada registro
-        resumen = []  # una fila por registro
-
-        # Encabezados fijos para la escritura incremental.
+        pasos = []
+        resumen = []
         encabezados_pasos = ["NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUB-SERIE", "NIVEL", "VALOR", "ENCONTRADO"]
-        encabezados_resumen = ["NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUB-SERIE", "MOTIVO", "EXPEDIENTE_ENCONTRADO"]
-        # En una re-ejecución se empieza de cero (sin acumular registros viejos).
+        encabezados_resumen = ["NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUB-SERIE", "MOTIVO", "EXPEDIENTE_ENCONTRADO", "DESCRIPCION"]
         if ruta_pasos and os.path.isfile(ruta_pasos):
             os.remove(ruta_pasos)
         if ruta_resumen and os.path.isfile(ruta_resumen):
             os.remove(ruta_resumen)
 
-        self._subserie_actual = None  # limpiar caché de ruta
-        self._expandidos = set()  # limpiar caché de nodos expandidos
+        self._subserie_actual = None
+        self._expandidos = set()
         self.navegar_al_repositorio()
 
+        # --- FASE 1: búsqueda en los buscadores (header + searchTerm) ---
+        reintento = []
         for idx, fila in df.iterrows():
             nombre = self._celda_csv(fila, "NOMBRE EXPEDIENTE")
             uaa = self._celda_csv(fila, "UAA")
@@ -836,61 +1169,91 @@ class AlfrescoExtractor:
                 continue
 
             try:
-                encontrado = self.navegar_ruta(uaa, serie, subserie, expediente=nombre)
+                encontrado = self._buscar_expediente_por_busqueda(nombre, uaa=uaa, serie=serie)
             except Exception as exc:
-                logger.error("Excepción navegando '%s': %s", nombre, exc)
-                self._guardar_html_diagnostico("error_navegacion")
-                self._capturar_pantalla("error_navegacion")
+                logger.error("Excepción buscando '%s': %s", nombre, exc)
                 encontrado = False
-                self.expediente_encontrado = False
-                self._ultima_traza = [t for t in self._ultima_traza] or [{
-                    "NIVEL": "NAVEGACION", "VALOR": subserie, "ENCONTRADO": False,
-                }]
+                self._ultima_traza = [{"NIVEL": "BUSQUEDA", "VALOR": nombre, "ENCONTRADO": False}]
 
-            exp_found = self.expediente_encontrado and encontrado
-            if exp_found:
-                motivo = ""
-            elif not encontrado:
-                motivo = "carpeta_no_encontrada"
+            if encontrado:
+                self.expediente_encontrado = True
+                self._traza("BUSQUEDA", nombre, True)
+                logger.info("Fast path: '%s' localizado vía buscador global.", nombre)
+                fila_resumen, filas_paso, exp_found = self._registrar_resultado(
+                    nombre, uaa, serie, subserie, True, pasos, resumen,
+                )
+                if ruta_pasos and ruta_resumen:
+                    self._append_csv(ruta_pasos, encabezados_pasos, filas_paso)
+                    self._append_csv(ruta_resumen, encabezados_resumen, [fila_resumen])
+                logger.info("[%d/%d] (búsqueda) '%s' -> ENCONTRADO", idx + 1, len(df), nombre)
             else:
-                motivo = "expediente_no_encontrado"
+                self.expediente_encontrado = False
+                self._ultima_traza = []
+                reintento.append({
+                    "NOMBRE EXPEDIENTE": nombre, "UAA": uaa, "SERIE": serie, "SUB-SERIE": subserie,
+                })
+                logger.info("[%d/%d] (búsqueda) '%s' -> NO ENCONTRADO (pasa a reintento)", idx + 1, len(df), nombre)
 
-            filas_paso = []
-            for paso in self._ultima_traza:
-                fila_paso = {
-                    "NOMBRE EXPEDIENTE": nombre,
-                    "UAA": uaa,
-                    "SERIE": serie,
-                    "SUB-SERIE": subserie,
-                    **paso,
-                }
-                pasos.append(fila_paso)
-                filas_paso.append(fila_paso)
+        ruta_reintento = self._ruta_csv_aux(ruta_resumen, "verificacion_alfresco_reintento.csv")
+        if reintento:
+            pd.DataFrame(reintento).to_csv(ruta_reintento, index=False, encoding="utf-8-sig")
+            logger.info("FASE 1: %d no encontrados -> reintento: %s", len(reintento), ruta_reintento)
+        else:
+            logger.info("FASE 1: todos encontrados por búsqueda (sin reintento).")
 
-            fila_resumen = {
-                "NOMBRE EXPEDIENTE": nombre,
-                "UAA": uaa,
-                "SERIE": serie,
-                "SUB-SERIE": subserie,
-                "MOTIVO": motivo,
-                "EXPEDIENTE_ENCONTRADO": "SI" if exp_found else "NO",
-            }
-            resumen.append(fila_resumen)
+        # --- FASE 2: ruta manual del árbol sobre los no encontrados ---
+        if reintento:
+            self._subserie_actual = None
+            self._expandidos = set()
+            self.navegar_al_repositorio()
+            for j, item in enumerate(reintento):
+                nombre = item["NOMBRE EXPEDIENTE"]
+                uaa = item["UAA"]
+                serie = item["SERIE"]
+                subserie = item["SUB-SERIE"]
+                try:
+                    encontrado = self._navegar_arbol(uaa, serie, subserie, nombre)
+                except Exception as exc:
+                    logger.error("Excepción en ruta manual '%s': %s", nombre, exc)
+                    encontrado = False
+                    self.expediente_encontrado = False
+                    self._ultima_traza = [{"NIVEL": "NAVEGACION", "VALOR": subserie, "ENCONTRADO": False}]
+                fila_resumen, filas_paso, exp_found = self._registrar_resultado(
+                    nombre, uaa, serie, subserie, encontrado, pasos, resumen,
+                )
+                if ruta_pasos and ruta_resumen:
+                    self._append_csv(ruta_pasos, encabezados_pasos, filas_paso)
+                    self._append_csv(ruta_resumen, encabezados_resumen, [fila_resumen])
+                logger.info(
+                    "[reintento %d/%d] '%s' -> %s",
+                    j + 1, len(reintento), nombre,
+                    "ENCONTRADO" if exp_found else (
+                        "SUB-SERIE OK / EXP NO" if encontrado else "NO ENCONTRADO"
+                    ),
+                )
 
-            # Escritura incremental: los resultados quedan visibles en disco.
-            if ruta_pasos and ruta_resumen:
-                self._append_csv(ruta_pasos, encabezados_pasos, filas_paso)
-                self._append_csv(ruta_resumen, encabezados_resumen, [fila_resumen])
-            logger.info(
-                "[%d/%d] '%s' -> %s",
-                idx + 1, len(df), nombre,
-                "ENCONTRADO" if exp_found else (
-                    "SUB-SERIE OK / EXP NO" if encontrado else "NO ENCONTRADO"
-                ),
-            )
+        # --- Resumen final + pendientes definitivos ---
+        ruta_pendientes = self._ruta_csv_aux(ruta_resumen, "verificacion_alfresco_pendientes.csv")
+        # Los pendientes no llevan la columna DESCRIPCION (solo el resumen principal).
+        finales_no = [
+            {k: v for k, v in r.items() if k != "DESCRIPCION"}
+            for r in resumen if r["EXPEDIENTE_ENCONTRADO"] == "NO"
+        ]
+        pd.DataFrame(finales_no).to_csv(ruta_pendientes, index=False, encoding="utf-8-sig")
 
-        logger.info("Verificación CSV finalizada: %d registros, %d pasos apilados.", len(resumen), len(pasos))
-        return {"pasos": pasos, "resumen": resumen}
+        logger.info(
+            "Verificación finalizada (2 fases): %d registros | %d encontrados | %d no encontrados. "
+            "Pendientes: %s",
+            len(resumen), len(resumen) - len(finales_no), len(finales_no), ruta_pendientes,
+        )
+        return {
+            "pasos": pasos,
+            "resumen": resumen,
+            "reintento": reintento,
+            "pendientes": finales_no,
+            "ruta_reintento": ruta_reintento,
+            "ruta_pendientes": ruta_pendientes,
+        }
 
     def ejecutar_verificacion_csv(
         self,
@@ -899,14 +1262,14 @@ class AlfrescoExtractor:
         ruta_resumen: Optional[str] = None,
     ) -> dict:
         if not ruta_pasos or not ruta_resumen:
-            carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+            carpeta = str(RESULTADOS_DIR)
             ruta_pasos = ruta_pasos or os.path.join(carpeta, "verificacion_alfresco_pasos.csv")
             ruta_resumen = ruta_resumen or os.path.join(carpeta, "verificacion_alfresco.csv")
         logger.info("Salida incremental: pasos=%s | resumen=%s", ruta_pasos, ruta_resumen)
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-            self._guardar_html_diagnostico("post_login")
+       
             return self.verificar_expedientes_desde_csv(ruta_csv, ruta_pasos, ruta_resumen)
         except Exception as exc:
             logger.critical("Fallo en la verificación Alfresco desde CSV: %s", exc, exc_info=True)
@@ -917,16 +1280,7 @@ class AlfrescoExtractor:
     # ------------------------------------------------------------------
     #  Utilidades
     # ------------------------------------------------------------------
-    def _guardar_html_diagnostico(self, nombre: str):
-        carpeta = os.path.join(self.runtime_dir, "diagnostico")
-        os.makedirs(carpeta, exist_ok=True)
-        ruta = os.path.join(carpeta, f"{nombre}_{int(time.time())}.html")
-        try:
-            with open(ruta, "w", encoding="utf-8") as f:
-                f.write(self.driver.page_source)
-            logger.info("HTML de diagnóstico guardado: %s", ruta)
-        except Exception:
-            logger.warning("No se pudo guardar HTML de diagnóstico.")
+    
 
 
 
@@ -937,7 +1291,7 @@ class AlfrescoExtractor:
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-            self._guardar_html_diagnostico("post_login")
+           
             return self.extraer_title()
         except Exception as exc:
             logger.critical("Fallo en la fase de extracción Alfresco: %s", exc, exc_info=True)
@@ -992,7 +1346,7 @@ def parsear_argumentos() -> argparse.Namespace:
         default=None,
         help=(
             "Ruta a un CSV con columnas 'NOMBRE EXPEDIENTE', 'UAA' y 'SERIE' "
-            "para verificar todas las rutas (ej. output/conciliacion_datos.csv)."
+            "para verificar todas las rutas (ej. archivos/resultados/conciliacion_datos.csv)."
         ),
     )
     parser.add_argument(
@@ -1044,7 +1398,7 @@ def main():
             print(f"RUTA_ENCONTRADA={encontrado}")
             sys.exit(0 if encontrado else 1)
         else:
-            ruta_csv = os.path.join(base_dir, "output", "conciliacion_datos.csv")
+            ruta_csv = str(RESULTADOS_DIR / "conciliacion_datos.csv")
             logger.info("Sin --csv: se usa el inicio por defecto %s", ruta_csv)
 
         if not os.path.isfile(ruta_csv):
@@ -1059,7 +1413,7 @@ def main():
             logger.error("No se obtuvieron resultados del CSV.")
             sys.exit(1)
 
-        output_dir = os.path.join(base_dir, "output")
+        output_dir = str(RESULTADOS_DIR)
         os.makedirs(output_dir, exist_ok=True)
         ruta_pasos = os.path.join(output_dir, "verificacion_alfresco_pasos.csv")
         ruta_resumen = os.path.join(output_dir, "verificacion_alfresco.csv")
