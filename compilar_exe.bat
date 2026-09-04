@@ -24,6 +24,10 @@ python -m PyInstaller --clean --noconfirm --onefile --windowed --name SistemaCon
   --hidden-import utils.logger ^
   --hidden-import utils.limpieza ^
   --hidden-import config ^
+  --hidden-import win32com ^
+  --hidden-import win32com.client ^
+  --hidden-import pythoncom ^
+  --hidden-import pywintypes ^
   app_gui.py
 
 if errorlevel 1 (

@@ -7,7 +7,15 @@ import openpyxl
 from openpyxl.formula.translate import Translator
 from openpyxl.styles import PatternFill
 
-from config import CONTRATOS_DIR, MATRIZ_ACTUALIZADA_DIR, MATRIZ_MANUAL_DIR, preparar_directorios
+from config import CONTRATOS_DIR, MATRIZ_ACTUALIZADA_DIR, preparar_directorios
+from config import ruta_matriz_manual
+
+try:
+    import win32com.client as win32com
+    EXCEL_COM_DISPONIBLE = True
+except ImportError:
+    win32com = None
+    EXCEL_COM_DISPONIBLE = False
 
 # =========================
 # CONFIGURACIÓN
@@ -15,9 +23,13 @@ from config import CONTRATOS_DIR, MATRIZ_ACTUALIZADA_DIR, MATRIZ_MANUAL_DIR, pre
 CARPETA_CONTRATOS = CONTRATOS_DIR
 PATRON_CONTRATOS = "contratos_*.xlsx"
 
-ARCHIVO_MATRIZ = MATRIZ_MANUAL_DIR / "Matriz Seguimiento Contractual UIS.xlsx"
+ARCHIVO_MATRIZ = ruta_matriz_manual()
 ARCHIVO_SALIDA = MATRIZ_ACTUALIZADA_DIR / "Matriz Seguimiento Contractual UIS_actualizada.xlsx"
 ARCHIVO_NUEVOS = MATRIZ_ACTUALIZADA_DIR / "nuevos_contratos.csv"
+
+# Tiempo máximo de espera (segundos) para que Excel abra y recalcule.
+# Si tarda más, se cancela para no colgar el flujo.
+EXCEL_ESPERA_SEGUNDOS = 300
 
 HOJA_MAESTRO = "MAESTRO"
 HOJA_SEGUIMIENTO = "SEGUIMIENTO"
@@ -137,6 +149,70 @@ def valores_exporte(ws_maestro, fila, encabezados_maestro):
         columna = encabezados_maestro.get(encabezado)
         exporte[destino] = ws_maestro.cell(fila, columna).value if columna else None
     return exporte
+
+
+def recalcular_con_excel(ruta_archivo, timeout=EXCEL_ESPERA_SEGUNDOS):
+    """Abre el libro con Excel y lo recalcula para guardar los valores de las fórmulas.
+
+    openpyxl solo escribe el *texto* de cada fórmula, sin su resultado. Por eso, sin
+    este paso, las hojas calculadas (p. ej. SEGUIMIENTO) aparecen vacías al abrirlas
+    en Excel si este no recalculan automáticamente. Excel suele recalcular al abrir,
+    pero este método deja siempre guardado el valor, de modo que se vea incluso en
+    otros visores que leen únicamente el valor en caché.
+
+    Devuelve True si Excel recalculó y guardó; False si no fue posible (sin Excel,
+    sin pywin32, o se superó el tiempo de espera) sin lanzar excepción.
+    """
+    if not EXCEL_COM_DISPONIBLE:
+        print("[!] No está disponible pywin32; se omite la recalculación por Excel.")
+        return False
+
+    ruta = str(ruta_archivo)
+    app = None
+    try:
+        app = win32com.Dispatch("Excel.Application")
+        app.DisplayAlerts = False
+        app.Visible = False
+        app.ScreenUpdating = False
+        # En algunos equipos puede tardar en aparecer la ventana.
+        app.EnableEvents = False
+
+        # Workbook con protección de estructura no se puede guardar con guiones: desactivarla.
+        libro = app.Workbooks.Open(
+            ruta, ReadOnly=False, UpdateLinks=3, Password="", WriteResPassword="",
+        )
+
+        # Recálculo completo de todas las fórmulas.
+        app.CalculateFull()
+
+        # CalcularFull() es síncrono; esperamos un margen por si el libro es muy
+        # pesado y Excel aún está terminando de recalcular.
+        try:
+            tiempo_restante = timeout
+            while tiempo_restante > 0:
+                if app.CalculationState == 0:  # xlDone
+                    break
+                import time
+                time.sleep(2)
+                tiempo_restante -= 2
+        except Exception:
+            pass
+
+        libro.Save()
+        libro.Close(SaveChanges=False)
+        print("[OK] Excel recalculó y guardó los valores de las fórmulas.")
+        return True
+
+    except Exception as exc:
+        print(f"[!] No se pudo recalcular con Excel: {exc}")
+        return False
+
+    finally:
+        try:
+            if app is not None:
+                app.Quit()
+        except Exception:
+            pass
 
 
 def main():
@@ -331,7 +407,18 @@ def main():
     # ---------------------------------------------------------
     # 5. GUARDAR RESULTADO
     # ---------------------------------------------------------
+    # Pedir también a openpyxl que marque el libro para recalcular al abrirse.
+    # Es una red de seguridad por si la recalculación por Excel COM no está disponible.
+    try:
+        wb_matriz.calculation.fullCalcOnLoad = True
+    except Exception:
+        pass
+
     wb_matriz.save(ARCHIVO_SALIDA)
+
+    # Recalcular con Excel para que las fórmulas de SEGUIMIENTO (y demás hojas
+    # calculadas) queden con su valor guardado y no aparezcan vacías al abrir.
+    recalcular_con_excel(ARCHIVO_SALIDA)
 
     # Exporta solo los contratos nuevos del día (los que no estaban en el MAESTRO),
     # para que el bloque UISARD/Alfresco verifique únicamente las incorporaciones de hoy.

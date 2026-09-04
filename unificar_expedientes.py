@@ -19,14 +19,13 @@ import unicodedata
 
 import pandas as pd
 
-from config import EXTRACCION_DIR, MATRIZ_MANUAL_DIR
+from config import EXTRACCION_DIR, MATRIZ_MANUAL_DIR, PATRON_ORDENADORES, ruta_ordenadores
 from utils.logger import configurar_logger
 
 logger = configurar_logger("unificacion")
 
 # Columnas del expediente que llegan desde UISARD.
 COLUMNAS_UISARD = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
-PATRON_ORDENADORES = "Ordenadores_*.xlsx"
 
 
 def _clave_contrato(valor):
@@ -68,7 +67,11 @@ def _normalizar_nombre(valor) -> str:
 
 
 def _buscar_archivo_ordenadores() -> str:
-    """Devuelve el archivo de ordenadores más reciente de la matriz manual."""
+    """Devuelve el archivo de ordenadores configurado por la GUI o el más reciente."""
+    ruta_cfg = ruta_ordenadores()
+    if ruta_cfg and os.path.isfile(ruta_cfg):
+        return str(ruta_cfg)
+
     archivos = list(MATRIZ_MANUAL_DIR.glob(PATRON_ORDENADORES))
     if not archivos:
         return ""

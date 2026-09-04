@@ -6,3 +6,4 @@ python-dotenv>=1.0.0
 xlsxwriter>=3.1
 playwright>=1.40.0
 playwright-stealth>=1.0.6
+pywin32>=306; platform_system == "Windows"

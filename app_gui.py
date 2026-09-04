@@ -17,7 +17,10 @@ import threading
 from datetime import date, datetime, timedelta
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
+
+from config import (ruta_matriz_manual, ruta_ordenadores, configurar_rutas,
+                    restablecer_rutas)
 
 FROZEN = getattr(sys, "frozen", False)
 
@@ -102,6 +105,52 @@ class _BotonRedondeado(tk.Canvas):
     def _al_click(self, _event):
         if self._habilitado:
             self._command()
+
+
+class _TituloRedondeado(tk.Canvas):
+    """Encabezado tipo pastilla: fondo verde redondeado que envuelve solo el texto."""
+
+    def __init__(self, parent, text, color=COLOR_VERDE_UIS, texto_color=COLOR_FONDO,
+                 alto=46, radio=23, **kwargs):
+        self._texto = text
+        self._color_relleno = color
+        self._color_texto = texto_color
+        self._radio = radio
+        self._fuente = ("Segoe UI Semibold", 15)
+        self._ancho_texto = self._medir_texto(text)
+
+        super().__init__(
+            parent, width=self._ancho_texto + self._radio * 2 + 44,
+            height=alto, highlightthickness=0,
+            bd=0, relief=tk.FLAT, bg=COLOR_FONDO, **kwargs,
+        )
+        self._dibujar()
+
+    def _medir_texto(self, texto):
+        """Calcula el ancho real del texto usando la fuente real del widget."""
+        fuente = tkfont.Font(family="Segoe UI", size=15, weight="bold")
+        return max(fuente.measure(texto), 1)
+
+    def _dibujar(self):
+        self.delete("all")
+        ancho = int(self["width"])
+        alto = int(self["height"])
+        radio = min(self._radio, alto // 2)
+        c = self._color_relleno
+        self.create_arc(0, 0, radio * 2, radio * 2, start=90, extent=90,
+                        fill=c, outline=c)
+        self.create_arc(ancho - radio * 2, 0, ancho, radio * 2, start=0,
+                        extent=90, fill=c, outline=c)
+        self.create_arc(0, alto - radio * 2, radio * 2, alto, start=180,
+                        extent=90, fill=c, outline=c)
+        self.create_arc(ancho - radio * 2, alto - radio * 2, ancho, alto,
+                        start=270, extent=90, fill=c, outline=c)
+        self.create_rectangle(radio, 0, ancho - radio, alto, fill=c, outline=c)
+        self.create_rectangle(0, radio, ancho, alto - radio, fill=c, outline=c)
+        self.create_text(
+            ancho // 2, alto // 2, text=self._texto, fill=self._color_texto,
+            font=self._fuente,
+        )
 
 
 def fecha_por_defecto() -> str:
@@ -212,10 +261,30 @@ class AppContratacion(tk.Tk):
     def _construir_interfaz(self) -> None:
         header = ttk.Frame(self, style="TFrame")
         header.pack(fill=tk.X)
-        ttk.Label(
-            header, text="Sistema Automatizado de contrataciones",
-            style="Header.TLabel", anchor="center",
-        ).pack(fill=tk.X)
+
+        # --- Barra superior: configuración (izquierda) + título centrado + actualizar (derecha) ---
+        barra_superior = ttk.Frame(header, style="TFrame", padding=(10, 6, 10, 6))
+        barra_superior.pack(fill=tk.X)
+
+        # Empaquetamos primero los dos botones a los extremos y el título al
+        # centro, con expand para que ocupe el espacio restante sin deformarse.
+        self.btn_git = _BotonRedondeado(
+            barra_superior, text="↻", command=self._actualizar_codigo,
+            width=44, height=36, color=COLOR_VERDE_OSCURO, color_hover=COLOR_VERDE_UIS,
+        )
+        self.btn_git.pack(side=tk.RIGHT)
+
+        self.btn_configuracion = _BotonRedondeado(
+            barra_superior, text="⚙", command=self._abrir_configuracion,
+            width=44, height=36, color=COLOR_VERDE_OSCURO, color_hover=COLOR_VERDE_UIS,
+        )
+        self.btn_configuracion.pack(side=tk.LEFT)
+
+        self.titulo = _TituloRedondeado(
+            barra_superior, text="Sistema Automatizado de contrataciones",
+            alto=46,
+        )
+        self.titulo.pack(side=tk.LEFT, expand=True, anchor="center")
 
         contenedor = ttk.Frame(self, style="TFrame", padding=16)
         contenedor.pack(fill=tk.BOTH, expand=True)
@@ -271,13 +340,6 @@ class AppContratacion(tk.Tk):
         )
         self.btn_continuar.configure(state=tk.DISABLED)
         self.btn_continuar.pack(side=tk.LEFT, padx=(8, 0))
-
-        self.btn_git = _BotonRedondeado(
-            barra, text="Actualizar código", command=self._actualizar_codigo,
-            width=150, height=38, color=COLOR_VERDE_OSCURO,
-            color_hover=COLOR_VERDE_UIS,
-        )
-        self.btn_git.pack(side=tk.LEFT, padx=(8, 0))
 
         self.var_estado = tk.StringVar(value="")
         ttk.Label(
@@ -348,6 +410,61 @@ class AppContratacion(tk.Tk):
         if fin:
             args += ["--fecha-fin", fin]
         return args
+
+    # ------------------------------------------------------------------
+    # Configuración de rutas manuales
+    # ------------------------------------------------------------------
+    def _abrir_configuracion(self) -> None:
+        """Despliega un menú desde el botón ⚙ para cambiar las rutas manuales."""
+        menu = tk.Menu(self, tearoff=False)
+
+        matriz_actual = ruta_matriz_manual()
+        menu.add_command(
+            label=f"Matriz manual: {matriz_actual.name}",
+            command=self._seleccionar_matriz,
+        )
+        menu.add_command(
+            label=f"Ordenadores: {ruta_ordenadores().name}",
+            command=self._seleccionar_ordenadores,
+        )
+        menu.add_separator()
+        menu.add_command(label="Restablecer rutas por defecto", command=self._restablecer_configuracion)
+
+        x = self.btn_configuracion.winfo_rootx()
+        y = self.btn_configuracion.winfo_rooty() + self.btn_configuracion.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _seleccionar_matriz(self) -> None:
+        ruta = filedialog.askopenfilename(
+            title="Selecciona la matriz manual (Matriz Seguimiento Contractual UIS.xlsx)",
+            initialdir=str(ruta_matriz_manual().parent),
+            filetypes=[("Excel", "*.xlsx"), ("Todos los archivos", "*.*")],
+        )
+        if not ruta:
+            return
+        configurar_rutas(matriz_manual=ruta, ordenadores=str(ruta_ordenadores()))
+        self._append_log(f"[CONFIG] Matriz manual cambiada a:\n  {ruta}\n")
+        self.var_estado.set("Ruta de la matriz manual actualizada")
+
+    def _seleccionar_ordenadores(self) -> None:
+        ruta = filedialog.askopenfilename(
+            title="Selecciona el archivo de ordenadores (Ordenadores_*.xlsx)",
+            initialdir=str(ruta_ordenadores().parent),
+            filetypes=[("Excel", "*.xlsx"), ("Todos los archivos", "*.*")],
+        )
+        if not ruta:
+            return
+        configurar_rutas(matriz_manual=str(ruta_matriz_manual()), ordenadores=ruta)
+        self._append_log(f"[CONFIG] Ordenadores cambiado a:\n  {ruta}\n")
+        self.var_estado.set("Ruta de ordenadores actualizada")
+
+    def _restablecer_configuracion(self) -> None:
+        restablecer_rutas()
+        self._append_log("[CONFIG] Rutas manuales restablecidas a los valores por defecto.\n")
+        self.var_estado.set("Rutas manuales por defecto")
 
     def _ejecutar(self) -> None:
         if self.proc is not None or getattr(self, "_en_proceso", False):
