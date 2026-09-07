@@ -1,0 +1,3 @@
+Esta carpeta contiene los datos que se colocan manualmente.
+
+Estos datos se colocan manualmente porque la fuente de datos NO se extrae de ningun sistema.

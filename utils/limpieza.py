@@ -74,7 +74,7 @@ def _purgar_por_patron(base_dir: str, carpeta: str, patron: str, mantener: int, 
 def limpiar(base_dir: str, serie: str = None) -> dict:
     """Ejecuta la purga sobre todas las reglas (y reportes por serie si se indica).
 
-    ``serie`` permite purgar también los reportes por serie de ``archivos/reportes_demo/``
+    ``serie`` permite purgar también los reportes por serie de ``archivos/04_Contratos_Descargados_UISARD/``
     conservando los 3 más recientes por cada tipo (contrato/convenio/proyecto).
     Devuelve un resumen {descripción: eliminados}.
     """

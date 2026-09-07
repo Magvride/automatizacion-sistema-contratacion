@@ -2,7 +2,7 @@
 """
 FASE 2 — Conciliación.
 
-Concatena todos los reportes por serie de ``archivos/reportes_demo/`` en un único CSV
+Concatena todos los reportes por serie de ``archivos/04_Contratos_Descargados_UISARD/`` en un único CSV
 con columnas estandarizadas, que luego consume la FASE 3 (Alfresco):
 
     NOMBRE EXPEDIENTE | NÚMERO CONTRATO | UAA | SERIE | SUBSERIE
@@ -26,7 +26,7 @@ from config import REPORTES_DIR, RESULTADOS_DIR
 logger = configurar_logger("conciliacion")
 
 RUTA_REPORTES = str(REPORTES_DIR)
-RUTA_SALIDA = str(RESULTADOS_DIR / "conciliacion_datos.csv")
+RUTA_SALIDA = str(RESULTADOS_DIR / "01_unificacion_tipo_contrato_UISARD.csv")
 
 COLUMNAS_DESEADAS = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
 

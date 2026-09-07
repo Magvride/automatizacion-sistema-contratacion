@@ -7,7 +7,7 @@ import openpyxl
 from openpyxl.formula.translate import Translator
 from openpyxl.styles import PatternFill
 
-from config import CONTRATOS_DIR, MATRIZ_ACTUALIZADA_DIR, preparar_directorios
+from config import CONTRATOS_DIR, MATRIZ_ACTUALIZADA_DIR, EXTRACCION_DIR, preparar_directorios
 from config import ruta_matriz_manual
 
 try:
@@ -24,8 +24,8 @@ CARPETA_CONTRATOS = CONTRATOS_DIR
 PATRON_CONTRATOS = "contratos_*.xlsx"
 
 ARCHIVO_MATRIZ = ruta_matriz_manual()
-ARCHIVO_SALIDA = MATRIZ_ACTUALIZADA_DIR / "Matriz Seguimiento Contractual UIS_actualizada.xlsx"
-ARCHIVO_NUEVOS = MATRIZ_ACTUALIZADA_DIR / "nuevos_contratos.csv"
+ARCHIVO_SALIDA = MATRIZ_ACTUALIZADA_DIR / "02_Matriz_Seguimiento_actualizada.xlsx"
+ARCHIVO_NUEVOS = EXTRACCION_DIR / "contratos_normalizados.csv"
 
 # Tiempo máximo de espera (segundos) para que Excel abra y recalcule.
 # Si tarda más, se cancela para no colgar el flujo.
@@ -421,13 +421,16 @@ def main():
     recalcular_con_excel(ARCHIVO_SALIDA)
 
     # Exporta solo los contratos nuevos del día (los que no estaban en el MAESTRO),
-    # para que el bloque UISARD/Alfresco verifique únicamente las incorporaciones de hoy.
+    # ya normalizados y con las columnas correo_ordenador/uisard (vacías), para que el
+    # bloque UISARD/Alfresco verifique únicamente las incorporaciones de hoy.
     if contratos_agregados:
         import pandas as pd
 
         df_nuevos = pd.DataFrame([nuevo["exporte"] for nuevo in contratos_agregados])
+        for col in ("correo_ordenador", "uisard"):
+            df_nuevos[col] = ""
         df_nuevos.to_csv(ARCHIVO_NUEVOS, index=False, encoding="utf-8-sig")
-        print(f"Contratos nuevos exportados a UISARD: {len(df_nuevos)} -> {ARCHIVO_NUEVOS}")
+        print(f"Contratos nuevos normalizados exportados a UISARD: {len(df_nuevos)} -> {ARCHIVO_NUEVOS}")
     elif ARCHIVO_NUEVOS.exists():
         ARCHIVO_NUEVOS.unlink()
         print("[+] Sin contratos nuevos hoy; se limpia el exporte de nuevos contratos.")
