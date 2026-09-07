@@ -3,7 +3,7 @@
 FASE 2.5 — Unificación.
 
 Une el bloque propio (contratos del sistema Financiero UIS, ``contratos_normalizados.csv``)
-con el bloque UISARD (``conciliacion_datos.csv``) usando el número de contrato como clave.
+con el bloque UISARD (``01_unificacion_tipo_contrato_UISARD.csv``) usando el número de contrato como clave.
 
 El bloque propio deja la columna ``uisard`` (y ``correo_ordenador``) vacía; esta fase las
 completa cuando el contrato existe en UISARD y adjunta la ruta del expediente

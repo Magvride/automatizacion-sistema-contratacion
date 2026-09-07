@@ -22,11 +22,11 @@ def _directorio_base() -> Path:
 
 BASE_DIR = _directorio_base()
 ARCHIVOS_DIR = BASE_DIR / "archivos"
-REPORTES_DIR = ARCHIVOS_DIR / "reportes_demo"
-CONTRATOS_DIR = ARCHIVOS_DIR / "contratos_uis"
-MATRIZ_MANUAL_DIR = ARCHIVOS_DIR / "matriz_manual"
-MATRIZ_ACTUALIZADA_DIR = ARCHIVOS_DIR / "matriz_actualizada"
-EXTRACCION_DIR = ARCHIVOS_DIR / "extraccion_csv"
+REPORTES_DIR = ARCHIVOS_DIR / "04_Contratos_Descargados_UISARD"
+CONTRATOS_DIR = ARCHIVOS_DIR / "01_Contratos_Descargados"
+MATRIZ_MANUAL_DIR = ARCHIVOS_DIR / "00_Datos_Raw"
+MATRIZ_ACTUALIZADA_DIR = ARCHIVOS_DIR / "02_Matriz_actualizada"
+EXTRACCION_DIR = ARCHIVOS_DIR / "03_Contratos_Conciliacion"
 RESULTADOS_DIR = ARCHIVOS_DIR / "resultados"
 STORAGE_STATE_PATH = ARCHIVOS_DIR / "sesion" / "uis_storage_state.json"
 

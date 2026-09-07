@@ -2,7 +2,7 @@
 """
 Notificación a ordenadores de gasto con contratos NO registrados en UISARD.
 
-Lee ``archivos/resultados/contratos_unificados.csv`` (o el CSV que indique ``main.py``),
+Lee ``archivos/resultados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv`` (o el CSV que indique ``main.py``),
 busca los registros cuya columna ``uisard`` es ``NO``, agrupa por ``correo_ordenador`` y
 arma un correo por destinatario con la plantilla configurable.
 
@@ -185,7 +185,7 @@ def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=
     Devuelve un resumen: total registros revisados, sin_uisard, con_correo,
     sin_correo, y mensajes construidos.
     """
-    ruta_csv = str(ruta_csv or (RESULTADOS_DIR / "contratos_unificados.csv"))
+    ruta_csv = str(ruta_csv or (RESULTADOS_DIR / "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"))
     plantilla = plantilla or _variable("NOTIFICAR_PLANTILLA", PLANTILLA_POR_DEFECTO)
     enviar = enviar or _permiso_envio()
     borradores = borradores or (RESULTADOS_DIR / "borradores_correos_uisard.txt")

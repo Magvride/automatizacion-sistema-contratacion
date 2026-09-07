@@ -45,8 +45,8 @@ def construir_salidas(base_dir: str) -> dict:
     return {
         "carpeta": carpeta,
         "reportes": str(REPORTES_DIR),
-        "csv": os.path.join(carpeta, "conciliacion_datos.csv"),
-        "verificacion": os.path.join(carpeta, "contratos_unificados.csv"),
+        "csv": os.path.join(carpeta, "01_unificacion_tipo_contrato_UISARD.csv"),
+        "verificacion": os.path.join(carpeta, "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"),
     }
 
 
@@ -67,14 +67,13 @@ def paso_login_financiero(fecha_inicio: date, fecha_fin: date) -> None:
 
     builtins.input = input_del_flujo
     try:
-        print("[MAIN] Paso 1/6: login y descarga del reporte financiero")
+        print("[MAIN] Paso 1/5: login y descarga del reporte financiero")
         uis_login_p1.main(fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
     finally:
         builtins.input = original_input
 
 
 def ejecutar_bloque_propio(args) -> None:
-    import extraccion_p21
     import seguimiento_p2
 
     if args.skip_financiero:
@@ -82,10 +81,8 @@ def ejecutar_bloque_propio(args) -> None:
         return
 
     paso_login_financiero(args.fecha_inicio, args.fecha_fin)
-    print("[MAIN] Paso 2/6: actualización de la matriz de seguimiento")
+    print("[MAIN] Paso 2/5: actualización de la matriz de seguimiento")
     seguimiento_p2.main()
-    print("[MAIN] Paso 3/6: extracción del CSV normalizado")
-    extraccion_p21.main()
 
 
 # ----------------------------------------------------------------------
@@ -107,7 +104,7 @@ def fase_uisard(args) -> None:
         fecha_inicio=args.fecha_inicio.strftime("%Y-%m-%d"),
         fecha_fin=args.fecha_fin.strftime("%Y-%m-%d"),
     )
-    # Descarga los reportes por serie a archivos/reportes_demo/ (alimenta la FASE 2).
+    # Descarga los reportes por serie a archivos/04_Contratos_Descargados_UISARD/ (alimenta la FASE 2).
     extractor.ejecutar_extraccion()
 
 
@@ -188,7 +185,7 @@ def fase_notificacion(args, salidas: dict, ruta_unificado: Optional[str] = None)
     from notificar_uisard import notificar_no_uisard
 
     ruta_csv = args.ruta_unificado or ruta_unificado or os.path.join(
-        salidas["carpeta"], "contratos_unificados.csv"
+        salidas["carpeta"], "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"
     )
     resumen = notificar_no_uisard(ruta_csv, enviar=args.enviar_correos)
     logger.info(
@@ -360,15 +357,39 @@ def main():
     logger.info("Inicio de ejecución: %s", datetime.now().isoformat())
 
     try:
-        # Primero se ejecuta el bloque propio.
+        # Modulo 1 ---------------------------------------------------------------------------------------
+        """
+        Este modelo tiene como objetivo la siguiente serie de pasos 
+        paso 1: Ingresar a la plataforma de nuevas versiones y descargar el reporte financiero. Descarga en ./01_Contratos_Descargados
+        Paso 2: Ejecuta el main de seguimiento_p2 para actualizar la matriz de seguimiento y exportar el CSV normalizado. guarda en ./02_Matriz_actualizada y ./03_Contratos_Conciliacion
+        """
         ejecutar_bloque_propio(args)
 
-        # Después se ejecuta el bloque de la compañera.
+
+
+        #Modulo 2 ---------------------------------------------------------------------------------------
+        """
+        Este modelo tiene como objetivo la siguiente serie de pasos
+        paso 1: Ejecuta la fase_uisard para extraer los datos de UISARD. guarda en ./04_Contratos_Descargados_UISARD
+        Paso 2: Genera una archivo CSV con los datos recopilados en UISARD y los guarda
+        
+        """
+        #Paso 1: Ejecuta la fase_uisard para extraer los datos de UISARD. Hace el login en la plataforma
         logger.info("Inicio del bloque UISARD/Alfresco")
         fase_uisard(args)
+        #paso 2: genera un archivo csv con los datos recopilados en UISARD y los guarda en 
         df = fase_conciliacion(args, salidas)
         logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
+        #paso 3: concatena los 3 tipos de contratos extraídos de alfresco y los guarda en un archivo csv
         csv_verificacion = fase_unificacion(args, salidas, df)
+
+
+        #Modulo 3 ---------------------------------------------------------------------------------------
+        """"
+        Este modulo tiene como objetivo la siguiente serie de pasos
+        paso 1: Entrar y autenticarse en la plataforma de Alfresco y verificar los contratos que se encuentran en el archivo csv generado en el paso anterior.
+        paso 2: notificar a los ordenadores
+        """
         fase_alfresco(args, salidas, csv_verificacion)
         fase_notificacion(args, salidas, csv_verificacion)
         logger.info("Proceso completo: bloque propio y bloque UISARD/Alfresco finalizados.")

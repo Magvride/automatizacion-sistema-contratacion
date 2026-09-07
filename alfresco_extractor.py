@@ -1346,7 +1346,7 @@ def parsear_argumentos() -> argparse.Namespace:
         default=None,
         help=(
             "Ruta a un CSV con columnas 'NOMBRE EXPEDIENTE', 'UAA' y 'SERIE' "
-            "para verificar todas las rutas (ej. archivos/resultados/conciliacion_datos.csv)."
+            "para verificar todas las rutas (ej. archivos/resultados/01_unificacion_tipo_contrato_UISARD.csv)."
         ),
     )
     parser.add_argument(
@@ -1398,7 +1398,7 @@ def main():
             print(f"RUTA_ENCONTRADA={encontrado}")
             sys.exit(0 if encontrado else 1)
         else:
-            ruta_csv = str(RESULTADOS_DIR / "conciliacion_datos.csv")
+            ruta_csv = str(RESULTADOS_DIR / "01_unificacion_tipo_contrato_UISARD.csv")
             logger.info("Sin --csv: se usa el inicio por defecto %s", ruta_csv)
 
         if not os.path.isfile(ruta_csv):

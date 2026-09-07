@@ -4,9 +4,9 @@
 archivos/sesion/
 
 # Archivos generados por las ejecuciones
-archivos/contratos_uis/
-archivos/matriz_actualizada/
-archivos/extraccion_csv/
+archivos/01_Contratos_Descargados/
+archivos/02_Matriz_actualizada/
+archivos/03_Contratos_Conciliacion/
 archivos/resultados/
 logs/
 output/
