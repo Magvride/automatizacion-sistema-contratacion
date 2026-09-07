@@ -29,7 +29,7 @@ from selenium.common.exceptions import (
 )
 
 from utils.logger import configurar_logger
-from config import RESULTADOS_DIR
+from config import RESULTADOS_DIR, EXHIBITOS_VERIFICADOS_DIR
 
 logger = configurar_logger("alfresco")
 
@@ -67,10 +67,8 @@ class AlfrescoExtractor:
         # Corroboración por ZIP: desactivable para correr rápido (--no-zip).
         self.zip_verificacion = descargar_zip
         # Carpeta donde se guardan los ZIPS de los expedientes corroborados.
-        self.archivo_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "output", "expedientes_verificados"
-        )
-        self.runtime_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        self.archivo_dir = str(EXHIBITOS_VERIFICADOS_DIR)
+        self.runtime_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
         os.makedirs(self.runtime_dir, exist_ok=True)
         self.driver: Optional[webdriver.Chrome] = None
         self.title: Optional[str] = None
@@ -1054,7 +1052,7 @@ class AlfrescoExtractor:
         if ruta_resumen:
             carpeta = os.path.dirname(ruta_resumen)
         else:
-            carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+            carpeta = str(RESULTADOS_DIR)
         os.makedirs(carpeta, exist_ok=True)
         return os.path.join(carpeta, nombre)
 
@@ -1346,7 +1344,7 @@ def parsear_argumentos() -> argparse.Namespace:
         default=None,
         help=(
             "Ruta a un CSV con columnas 'NOMBRE EXPEDIENTE', 'UAA' y 'SERIE' "
-            "para verificar todas las rutas (ej. archivos/resultados/01_unificacion_tipo_contrato_UISARD.csv)."
+            "para verificar todas las rutas (ej. archivos/05_Datos_filtrados/01_unificacion_tipo_contrato_UISARD.csv)."
         ),
     )
     parser.add_argument(
@@ -1373,7 +1371,7 @@ def main():
         rapido=not args.lento,
     )
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     try:
         if args.solo_title:

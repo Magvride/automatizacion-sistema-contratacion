@@ -9,7 +9,8 @@ Todas las entradas y salidas del flujo se guardan dentro de `archivos/`:
 | `00_Datos_Raw/` | Entrada manual. Aquí debe colocarse `Matriz Seguimiento Contractual UIS.xlsx`. |
 | `02_Matriz_actualizada/` | Salida de `seguimiento_p2.py` (matriz actualizada). |
 | `03_Contratos_Conciliacion/` | CSV normalizado generado por `seguimiento_p2.py` (`contratos_normalizados.csv`). |
-| `resultados/` | Consolidado y resultados de la parte UISARD/Alfresco. |
+| `05_Datos_filtrados/` | Consolidado y resultados de la parte UISARD/Alfresco. |
+| `06_Expedientes/` | Expedientes verificados/descargados en Alfresco. |
 
 ## Flujo propio
 
@@ -38,8 +39,8 @@ El orquestador `main.py` encadena de forma secuencial:
 1. **Bloque propio (Financiero UIS):**
    `uis_login_p1` → `seguimiento_p2` (guarda en `03_Contratos_Conciliacion/contratos_normalizados.csv` los contratos nuevos del día).
 2. **FASE 1 — UISARD:** descarga reportes por serie a `archivos/04_Contratos_Descargados_UISARD/`.
-3. **FASE 2 — Conciliación:** `conciliacion_datos.py` genera `archivos/resultados/01_unificacion_tipo_contrato_UISARD.csv`.
-4. **FASE 2.5 — Unificación:** `unificar_expedientes.py` une los contratos del bloque propio con los datos UISARD por número de contrato y genera `archivos/resultados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv` (rellena las columnas `uisard` y adjunta `NOMBRE EXPEDIENTE`/`UAA`/`SERIE`/`SUB-SERIE`).
-5. **FASE 3 — Alfresco:** `alfresco_extractor.py` verifica el CSV unido y guarda `verificacion_alfresco.csv` y `verificacion_alfresco_pasos.csv`.
+3. **FASE 2 — Conciliación:** `conciliacion_datos.py` genera `archivos/05_Datos_filtrados/01_unificacion_tipo_contrato_UISARD.csv`.
+4. **FASE 2.5 — Unificación:** `unificar_expedientes.py` une los contratos del bloque propio con los datos UISARD por número de contrato y genera `archivos/05_Datos_filtrados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv` (rellena las columnas `uisard` y adjunta `NOMBRE EXPEDIENTE`/`UAA`/`SERIE`/`SUB-SERIE`).
+5. **FASE 3 — Alfresco:** `alfresco_extractor.py` verifica el CSV unido y guarda `verificacion_alfresco.csv` y `verificacion_alfresco_pasos.csv` en `archivos/05_Datos_filtrados/`, y los expedientes corroborados en `archivos/06_Expedientes/expedientes_verificados/`.
 
 Las credenciales de `uis_login_p1.py` se leen desde `UIS_LOGIN_USER`/`UIS_LOGIN_PASS` del `.env`. Si no existen, usa `UISARD_USER`/`UISARD_PASS`.

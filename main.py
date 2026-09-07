@@ -14,6 +14,11 @@ import pandas as pd
 from dotenv import load_dotenv
 load_dotenv()
 
+if not getattr(sys, "frozen", False):
+    _SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+    if _SRC_DIR not in sys.path:
+        sys.path.insert(0, _SRC_DIR)
+
 from utils.logger import configurar_logger
 
 logger = configurar_logger("main")
@@ -363,7 +368,7 @@ def main():
         paso 1: Ingresar a la plataforma de nuevas versiones y descargar el reporte financiero. Descarga en ./01_Contratos_Descargados
         Paso 2: Ejecuta el main de seguimiento_p2 para actualizar la matriz de seguimiento y exportar el CSV normalizado. guarda en ./02_Matriz_actualizada y ./03_Contratos_Conciliacion
         """
-        ejecutar_bloque_propio(args)
+        #ejecutar_bloque_propio(args)
 
 
 

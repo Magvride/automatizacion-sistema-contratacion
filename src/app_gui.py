@@ -19,19 +19,28 @@ from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
+FROZEN = getattr(sys, "frozen", False)
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_APP_DIR)
+
+if not FROZEN:
+    for _p in (_ROOT_DIR, _APP_DIR):
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+
 from config import (
     ruta_matriz_manual,
     ruta_ordenadores,
+    ruta_onedrive_destino,
     configurar_rutas,
     restablecer_rutas,
 )
-
-FROZEN = getattr(sys, "frozen", False)
+from onedrive_subida import ruta_matriz_origen, subir_a_onedrive
 
 if FROZEN:
     BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = _ROOT_DIR
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
 
 FORMATO_FECHA = "%Y-%m-%d"
@@ -474,6 +483,17 @@ class AppContratacion(tk.Tk):
         self.btn_continuar.configure(state=tk.DISABLED)
         self.btn_continuar.pack(side=tk.LEFT, padx=(8, 0))
 
+        self.btn_onedrive = _BotonRedondeado(
+            barra,
+            text="Subir a OneDrive",
+            command=self._subir_onedrive,
+            width=140,
+            height=38,
+            color="#1d6fb8",
+            color_hover="#175a94",
+        )
+        self.btn_onedrive.pack(side=tk.LEFT, padx=(8, 0))
+
         self.var_estado = tk.StringVar(value="")
         ttk.Label(
             barra,
@@ -575,6 +595,10 @@ class AppContratacion(tk.Tk):
             label=f"Ordenadores: {ruta_ordenadores().name}",
             command=self._seleccionar_ordenadores,
         )
+        menu.add_command(
+            label=f"OneDrive: {ruta_onedrive_destino()}",
+            command=self._seleccionar_onedrive,
+        )
         menu.add_separator()
         menu.add_command(
             label="Restablecer rutas por defecto",
@@ -612,12 +636,66 @@ class AppContratacion(tk.Tk):
         self._append_log(f"[CONFIG] Ordenadores cambiado a:\n  {ruta}\n")
         self.var_estado.set("Ruta de ordenadores actualizada")
 
+    def _seleccionar_onedrive(self) -> None:
+        ruta = filedialog.askdirectory(
+            title="Selecciona la carpeta destino en OneDrive",
+            initialdir=str(ruta_onedrive_destino().parent),
+        )
+        if not ruta:
+            return
+        configurar_rutas(
+            matriz_manual=str(ruta_matriz_manual()),
+            ordenadores=str(ruta_ordenadores()),
+            onedrive_destino=ruta,
+        )
+        self._append_log(f"[CONFIG] Carpeta OneDrive cambiada a:\n  {ruta}\n")
+        self.var_estado.set("Carpeta OneDrive actualizada")
+
     def _restablecer_configuracion(self) -> None:
         restablecer_rutas()
         self._append_log(
             "[CONFIG] Rutas manuales restablecidas a los valores por defecto.\n"
         )
         self.var_estado.set("Rutas manuales por defecto")
+
+    # ------------------------------------------------------------------
+    # Subida a OneDrive
+    # ------------------------------------------------------------------
+    def _subir_onedrive(self) -> None:
+        if getattr(self, "_subiendo_onedrive", False):
+            return
+        origen = ruta_matriz_origen()
+        if not origen.is_file():
+            messagebox.showerror(
+                "Matriz no disponible",
+                "Aún no existe la matriz actualizada.\n"
+                f"Ejecuta el flujo o coloca el archivo en:\n{origen}",
+            )
+            return
+        self._subiendo_onedrive = True
+        self.btn_onedrive.configure(state=tk.DISABLED)
+        self.var_estado.set("Subiendo a OneDrive…")
+        self._append_log("[ONEDRIVE] Copiando la matriz a OneDrive…\n")
+        threading.Thread(
+            target=self._subir_onedrive_hilo, args=(origen,), daemon=True
+        ).start()
+
+    def _subir_onedrive_hilo(self, origen) -> None:
+        try:
+            destino = subir_a_onedrive(origen)
+            self.cola.put(("linea", f"[ONEDRIVE] Matriz copiada a OneDrive: {destino}\n"))
+            self.cola.put(("onedrive_fin", True))
+        except Exception as exc:
+            self.cola.put(("linea", f"[ONEDRIVE] Error al subir: {exc}\n"))
+            self.cola.put(("onedrive_fin", False))
+
+    def _finalizar_onedrive(self, exito: bool) -> None:
+        self._subiendo_onedrive = False
+        self.btn_onedrive.configure(state=tk.NORMAL)
+        if exito:
+            self.var_estado.set("Matriz subida a OneDrive")
+        else:
+            self.var_estado.set("Error al subir a OneDrive")
 
     def _ejecutar(self) -> None:
         if self.proc is not None or getattr(self, "_en_proceso", False):
@@ -685,6 +763,7 @@ class AppContratacion(tk.Tk):
             "unificacion",
             "limpieza",
             "uisard_alfresco",
+            "onedrive",
         ]
         for nombre in nombres:
             lg = logging.getLogger(nombre)
@@ -752,6 +831,8 @@ class AppContratacion(tk.Tk):
                     self._finalizar(valor)
                 elif tipo == "git_fin":
                     self._finalizar_git(valor)
+                elif tipo == "onedrive_fin":
+                    self._finalizar_onedrive(valor)
         except queue.Empty:
             pass
         self.after(100, self._procesar_cola)
