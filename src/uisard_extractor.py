@@ -65,7 +65,7 @@ class UISARDExtractor:
         # Descarga del navegador a una carpeta temporal del sistema (se limpia sola).
         self.download_dir = download_dir or tempfile.mkdtemp(prefix="uisard_dl_")
         self.runtime_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "logs"
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
         )
         os.makedirs(self.runtime_dir, exist_ok=True)
         self.reportes_dir = str(REPORTES_DIR)
@@ -569,7 +569,7 @@ def fase_uisard(args, salidas: dict) -> pd.DataFrame:
 
 def main():
     args = parsear_argumentos()
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     salidas = construir_salidas(base_dir)
 
     logger.info("Inicio de ejecución: %s", datetime.now().isoformat())

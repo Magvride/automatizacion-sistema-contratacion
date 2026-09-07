@@ -17,7 +17,7 @@ def _directorio_base() -> Path:
     """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 BASE_DIR = _directorio_base()
@@ -27,12 +27,21 @@ CONTRATOS_DIR = ARCHIVOS_DIR / "01_Contratos_Descargados"
 MATRIZ_MANUAL_DIR = ARCHIVOS_DIR / "00_Datos_Raw"
 MATRIZ_ACTUALIZADA_DIR = ARCHIVOS_DIR / "02_Matriz_actualizada"
 EXTRACCION_DIR = ARCHIVOS_DIR / "03_Contratos_Conciliacion"
-RESULTADOS_DIR = ARCHIVOS_DIR / "resultados"
+RESULTADOS_DIR = ARCHIVOS_DIR / "05_Datos_filtrados"
+EXHIBITOS_DIR = ARCHIVOS_DIR / "06_Expedientes"
+EXHIBITOS_VERIFICADOS_DIR = EXHIBITOS_DIR / "expedientes_verificados"
 STORAGE_STATE_PATH = ARCHIVOS_DIR / "sesion" / "uis_storage_state.json"
 
 # Archivos manuales que el usuario puede seleccionar desde la GUI (rutas por defecto).
 NOMBRE_MATRIZ_MANUAL = "Matriz Seguimiento Contractual UIS.xlsx"
 PATRON_ORDENADORES = "Ordenadores_*.xlsx"
+
+# Nombre del archivo de salida de la matriz actualizada generado por seguimiento_p2.py.
+NOMBRE_MATRIZ_ACTUALIZADA = "02_Matriz_Seguimiento_actualizada.xlsx"
+
+# Carpeta relativa fija dentro de OneDrive donde se copia la matriz (se puede
+# sobrescribir desde la GUI; la raíz de OneDrive se detecta por equipo).
+ONEDRIVE_CARPETA_DESTINO_REL = "02_Matriz_actualizada"
 
 # Persistencia de las rutas configuradas desde la GUI.
 ARCHIVO_CONFIG_RUTAS = BASE_DIR / "config_rutas.json"
@@ -64,6 +73,46 @@ def _cargar_config_rutas() -> dict:
         return {}
 
 
+def _detectar_raiz_onedrive() -> str:
+    """Detecta la carpeta raíz de OneDrive del equipo desde el registro de Windows.
+
+    Devuelve la primera ruta existente. Si OneDrive no está instalado, configurado
+    o no es accesible, devuelve una cadena vacía.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return ""
+
+    raices = []
+    rutas_registro = (
+        r"Software\Microsoft\OneDrive\Accounts",
+        r"Software\SyncEngines\Providers\OneDrive",
+    )
+    for ruta in rutas_registro:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, ruta) as clave_padre:
+                for i in range(winreg.QueryInfoKey(clave_padre)[0]):
+                    subclave = winreg.EnumKey(clave_padre, i)
+                    try:
+                        with winreg.OpenKey(clave_padre, subclave) as clave:
+                            valor, _ = winreg.QueryValueEx(clave, "UserFolder")
+                            if valor:
+                                raices.append(str(valor))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+    for raiz in raices:
+        try:
+            if Path(raiz).is_dir():
+                return raiz
+        except OSError:
+            continue
+    return ""
+
+
 def _guardar_config_rutas(config: dict) -> None:
     """Guarda el JSON de rutas configuradas de forma atómica."""
     try:
@@ -89,17 +138,39 @@ def ruta_ordenadores() -> Path:
     return _ruta_ordenadores_default()
 
 
-def configurar_rutas(matriz_manual: str = "", ordenadores: str = "") -> None:
+def ruta_onedrive_destino() -> Path:
+    """Carpeta destino en OneDrive: la configurada por la GUI o la detectada.
+
+    Si el usuario eligió una carpeta manualmente (config_rutas.json) y sigue
+    existiendo, se usa esa. Si no, se toma la raíz de OneDrive detectada por
+    registro y se le concatena la carpeta fija ``ONEDRIVE_CARPETA_DESTINO_REL``.
+    Como último recurso se asume ``~/OneDrive/``.
+    """
+    ruta = _cargar_config_rutas().get("onedrive_destino", "")
+    if ruta and Path(ruta).is_dir():
+        return Path(ruta)
+
+    raiz = _detectar_raiz_onedrive()
+    if raiz:
+        return Path(raiz) / ONEDRIVE_CARPETA_DESTINO_REL
+
+    return Path.home() / "OneDrive" / ONEDRIVE_CARPETA_DESTINO_REL
+
+
+def configurar_rutas(
+    matriz_manual: str = "", ordenadores: str = "", onedrive_destino: str = ""
+) -> None:
     """Guarda las rutas manuales elegidas en la GUI (vacías = usar el valor por defecto)."""
     config = _cargar_config_rutas()
     config["matriz_manual"] = str(matriz_manual) if matriz_manual else ""
     config["ordenadores"] = str(ordenadores) if ordenadores else ""
+    config["onedrive_destino"] = str(onedrive_destino) if onedrive_destino else ""
     _guardar_config_rutas(config)
 
 
 def restablecer_rutas() -> None:
     """Vuelve a dejar las rutas manuales en sus valores por defecto."""
-    configurar_rutas("", "")
+    configurar_rutas("", "", "")
 
 
 def preparar_directorios() -> None:
@@ -111,6 +182,8 @@ def preparar_directorios() -> None:
         MATRIZ_ACTUALIZADA_DIR,
         EXTRACCION_DIR,
         RESULTADOS_DIR,
+        EXHIBITOS_DIR,
+        EXHIBITOS_VERIFICADOS_DIR,
         STORAGE_STATE_PATH.parent,
     ):
         carpeta.mkdir(parents=True, exist_ok=True)

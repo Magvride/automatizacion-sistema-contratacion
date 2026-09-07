@@ -9,8 +9,14 @@ y se eliminan los más antiguos. Esto evita que las carpetas del proyecto
 
 import glob
 import os
+import sys
 import time
 from datetime import datetime, date
+
+if not getattr(sys, "frozen", False):
+    _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _SRC_DIR not in sys.path:
+        sys.path.insert(0, _SRC_DIR)
 
 from utils.logger import configurar_logger
 from config import REPORTES_DIR, RESULTADOS_DIR
@@ -100,5 +106,5 @@ def limpiar(base_dir: str, serie: str = None) -> dict:
 
 
 if __name__ == "__main__":
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     print(limpiar(base, serie=True))

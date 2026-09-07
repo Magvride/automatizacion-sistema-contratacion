@@ -2,7 +2,7 @@
 """
 Notificación a ordenadores de gasto con contratos NO registrados en UISARD.
 
-Lee ``archivos/resultados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv`` (o el CSV que indique ``main.py``),
+Lee ``archivos/05_Datos_filtrados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv`` (o el CSV que indique ``main.py``),
 busca los registros cuya columna ``uisard`` es ``NO``, agrupa por ``correo_ordenador`` y
 arma un correo por destinatario con la plantilla configurable.
 

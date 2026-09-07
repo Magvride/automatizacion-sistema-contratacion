@@ -11,7 +11,9 @@ _file_handler = None
 def _directorio_logs() -> str:
     if getattr(sys, "frozen", False):
         return os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "logs")
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs"
+    )
 
 
 def _obtener_file_handler():
