@@ -81,11 +81,11 @@ def paso_login_financiero(fecha_inicio: date, fecha_fin: date) -> None:
 def ejecutar_bloque_propio(args) -> None:
     import src.seguimiento_p2
 
-    if args.skip_financiero:
-        logger.info("--skip-financiero: se omite el bloque propio.")
-        return
+    #if args.skip_financiero:
+        #logger.info("--skip-financiero: se omite el bloque propio.")
+        #return
 
-    paso_login_financiero(args.fecha_inicio, args.fecha_fin)
+    #paso_login_financiero(args.fecha_inicio, args.fecha_fin)
     print("[MAIN] Paso 2/5: actualización de la matriz de seguimiento")
     src.seguimiento_p2.main()
 
@@ -440,7 +440,6 @@ def main():
         logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
         #paso 3: concatena los 3 tipos de contratos extraídos de alfresco y los guarda en un archivo csv
         fase_unificacion(args, salidas, df)
-        return
 
         #Modulo 3 ---------------------------------------------------------------------------------------
         """"
@@ -448,7 +447,8 @@ def main():
         paso 1: Entrar y autenticarse en la plataforma de Alfresco y verificar los contratos que se encuentran en el archivo csv generado en el paso anterior.
         paso 2: notificar a los ordenadores
         """
-        # La verificación de Alfresco se hace únicamente sobre el consolidado UISARD (01_...).
+        #La verificación de Alfresco se hace únicamente sobre el consolidado UISARD (01_...).
+
         fase_alfresco(args, salidas)
         # Se incorpora el resultado al consolidado 02 (alfresco + cantidad_archivos).
         fase_merge_alfresco(args, salidas)

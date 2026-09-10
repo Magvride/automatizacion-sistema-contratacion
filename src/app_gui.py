@@ -722,6 +722,9 @@ class AppContratacion(tk.Tk):
         cmd = [sys.executable, MAIN_PY] + self._construir_argumentos()
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
+        # Sin esto, los print() del proceso hijo quedan en buffer (stdout no es
+        # una terminal) y la ventana parece congelada durante los pasos lentos.
+        env["PYTHONUNBUFFERED"] = "1"
         try:
             self.proc = subprocess.Popen(
                 cmd,
