@@ -80,6 +80,9 @@ class AlfrescoExtractor:
         self._serie_label: Optional[str] = None
         self._subserie_label: Optional[str] = None
         self._doms_guardados: int = 0
+        # Número de archivos contenidos en el último ZIP corroborado.
+        # Es la prueba de hallazgo del expediente (>= 1 archivo).
+        self._cantidad_archivos: int = 0
         # Nodos ya expandidos con hijos cargados: evita re-descender/re-expandir
         # cuando se pasa de una subserie a otra de la misma UAA/serie.
         self._expandidos: set = set()
@@ -343,8 +346,11 @@ class AlfrescoExtractor:
         etiqueta = item.find_element(By.XPATH, ".//span[contains(@class,'ygtvlabel')]")
         self._human_click(etiqueta)
 
-    def _existe_documento(self, objetivo: str) -> bool:
-        """True si en la biblioteca de documentos hay un ítem cuyo nombre coincide."""
+    def _existe_documento(self, objetivo: str):
+        """True si en la biblioteca de documentos hay un ítem cuyo nombre coincide.
+
+        Devuelve el elemento (enlace/etiqueta) encontrado para poder abrirlo, o None.
+        """
         selectores = [
             "//h3[contains(@class,'filename')]//a[contains(@class,'filter-change')]",
             "//a[contains(@class,'filter-change')]",
@@ -361,10 +367,10 @@ class AlfrescoExtractor:
             for etiqueta in elementos:
                 texto = self._normalizar_texto(etiqueta.text)
                 if texto == objetivo or (objetivo and texto.startswith(objetivo)):
-                    return True
+                    return etiqueta
         except StaleElementReferenceException:
-            return False
-        return False
+            return None
+        return None
 
     def _pagina_actual(self) -> Optional[int]:
         """Número de página mostrado por el paginador YUI (.yui-pg-current-page)."""
@@ -411,7 +417,7 @@ class AlfrescoExtractor:
 
     def _buscar_expediente(
         self, expediente: str, timeout: Optional[int] = None, max_paginas: int = 200
-    ) -> bool:
+    ):
         """Busca el expediente dentro de la biblioteca de la subserie actual (AJAX).
 
         La biblioteca pagina los resultados (paginador YUI: 'N - M de TOTAL'); como
@@ -419,6 +425,8 @@ class AlfrescoExtractor:
         encontrarlo o agotar las páginas. ``startswith`` permite que el nombre del
         CSV (0270_2026000733_9701) coincida con la carpeta_archivo completa
         (0270_2026000733_9701_9703).
+
+        Devuelve el elemento del documento encontrado (para abrirlo) o None.
         """
         if timeout is None:
             timeout = self.timeout_busqueda
@@ -434,10 +442,9 @@ class AlfrescoExtractor:
         pagina = self._pagina_actual() or 1
         for _ in range(total_paginas - pagina + 1):
             try:
-                WebDriverWait(self.driver, timeout).until(
+                return WebDriverWait(self.driver, timeout).until(
                     lambda _d: self._existe_documento(objetivo)
                 )
-                return True
             except TimeoutException:
                 pass
 
@@ -447,7 +454,7 @@ class AlfrescoExtractor:
             if not self._ir_a_pagina_siguiente(actual + 1):
                 break
 
-        return False
+        return None
 
     # ------------------------------------------------------------------
     #  Fast path: búsqueda global (caja del header) antes de bajar el árbol
@@ -630,6 +637,7 @@ class AlfrescoExtractor:
             with zipfile.ZipFile(destino_zip) as z:
                 z.extractall(carpeta)
             n_items = sum(len(files) for _, _, files in os.walk(carpeta))
+            self._cantidad_archivos = n_items
             logger.info(
                 "Corroboración ZIP de '%s': %d ítems -> %s",
                 objetivo, n_items, carpeta,
@@ -642,6 +650,7 @@ class AlfrescoExtractor:
     def _descargar_zip_en_carpeta(self, expediente: str) -> bool:
         """Dentro de la carpeta abierta, selecciona todo y descarga el ZIP."""
         objetivo = self._normalizar_texto(expediente)
+        self._cantidad_archivos = 0
         try:
             os.makedirs(self.download_dir, exist_ok=True)
             antes = set(os.listdir(self.download_dir))
@@ -805,11 +814,18 @@ class AlfrescoExtractor:
                 if not self._carpeta_tiene_contenido():
                     logger.warning("Fast path: resultado '%s' sin contenido visible.", expediente)
                     continue
-                if self.zip_verificacion and self._descargar_zip_en_carpeta(expediente):
-                    return True
+                if self.zip_verificacion:
+                    if self._descargar_zip_en_carpeta(expediente) and self._cantidad_archivos >= 1:
+                        return True
+                    logger.warning(
+                        "Fast path: '%s' no corroborado por ZIP (n=%d).",
+                        expediente, self._cantidad_archivos,
+                    )
+                    encontrado = False
+                    break
+                self._cantidad_archivos = 0
                 logger.warning(
-                    "Fast path: '%s' verificado por contenido (ZIP %s).", expediente,
-                    "no disponible" if self.zip_verificacion else "desactivado",
+                    "Fast path: '%s' verificado por contenido (ZIP desactivado).", expediente,
                 )
                 encontrado = True
                 break
@@ -955,7 +971,17 @@ class AlfrescoExtractor:
 
         self.expediente_encontrado = False
         if expediente:
-            self.expediente_encontrado = self._buscar_expediente(expediente)
+            elemento = self._buscar_expediente(expediente)
+            if elemento is not None:
+                self._human_click(elemento)
+                if self.zip_verificacion:
+                    self.expediente_encontrado = (
+                        self._descargar_zip_en_carpeta(expediente)
+                        and self._cantidad_archivos >= 1
+                    )
+                else:
+                    self._cantidad_archivos = 0
+                    self.expediente_encontrado = True
             self._traza("EXPEDIENTE", expediente, self.expediente_encontrado)
             if self.expediente_encontrado:
                 logger.info("EXPEDIENTE '%s' encontrado dentro de la subserie '%s'.", expediente, subserie_label)
@@ -1105,6 +1131,8 @@ class AlfrescoExtractor:
             "UAA": uaa,
             "SERIE": serie,
             "SUB-SERIE": subserie,
+            "alfresco": "SI" if exp_found else "NO",
+            "cantidad_archivos": self._cantidad_archivos,
             "MOTIVO": motivo,
             "EXPEDIENTE_ENCONTRADO": "SI" if exp_found else "NO",
             "DESCRIPCION": self._describir_anomalia(nombre, exp_found),
@@ -1121,9 +1149,13 @@ class AlfrescoExtractor:
         """Verifica en dos fases: primero búsqueda (header + searchTerm), luego ruta manual.
 
         Fase 1 (búsqueda): recorre el CSV y busca cada expediente en los buscadores.
-        Los que la búsqueda no encuentra se guardan en ``reintento`` y se escriben a un
-        CSV auxiliar. Fase 2 (ruta manual): re-itera sobre ese subconjunto usando el
-        árbol (Repositorio -> UAA -> SERIE -> SUB-SERIE -> expediente).
+        Los que la búsqueda no encuentra se guardan en ``reintento`` (en memoria).
+        Fase 2 (ruta manual): re-itera sobre ese subconjunto usando el árbol
+        (Repositorio -> UAA -> SERIE -> SUB-SERIE -> expediente).
+
+        La prueba de hallazgo es el ZIP corroborado con >= 1 archivo (columna
+        ``cantidad_archivos``). Genera solo dos salidas: ``verificacion_alfresco.csv``
+        (todos los registros) y ``verificacion_pendientes.csv`` (los no encontrados).
         """
         try:
             df = pd.read_csv(ruta_csv, encoding="utf-8-sig")
@@ -1143,10 +1175,11 @@ class AlfrescoExtractor:
 
         pasos = []
         resumen = []
-        encabezados_pasos = ["NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUB-SERIE", "NIVEL", "VALOR", "ENCONTRADO"]
-        encabezados_resumen = ["NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUB-SERIE", "MOTIVO", "EXPEDIENTE_ENCONTRADO", "DESCRIPCION"]
-        if ruta_pasos and os.path.isfile(ruta_pasos):
-            os.remove(ruta_pasos)
+        encabezados_resumen = [
+            "NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUB-SERIE",
+            "alfresco", "cantidad_archivos",
+            "MOTIVO", "EXPEDIENTE_ENCONTRADO", "DESCRIPCION",
+        ]
         if ruta_resumen and os.path.isfile(ruta_resumen):
             os.remove(ruta_resumen)
 
@@ -1171,18 +1204,14 @@ class AlfrescoExtractor:
             except Exception as exc:
                 logger.error("Excepción buscando '%s': %s", nombre, exc)
                 encontrado = False
+                self._cantidad_archivos = 0
                 self._ultima_traza = [{"NIVEL": "BUSQUEDA", "VALOR": nombre, "ENCONTRADO": False}]
 
             if encontrado:
                 self.expediente_encontrado = True
                 self._traza("BUSQUEDA", nombre, True)
                 logger.info("Fast path: '%s' localizado vía buscador global.", nombre)
-                fila_resumen, filas_paso, exp_found = self._registrar_resultado(
-                    nombre, uaa, serie, subserie, True, pasos, resumen,
-                )
-                if ruta_pasos and ruta_resumen:
-                    self._append_csv(ruta_pasos, encabezados_pasos, filas_paso)
-                    self._append_csv(ruta_resumen, encabezados_resumen, [fila_resumen])
+                self._registrar_resultado(nombre, uaa, serie, subserie, True, pasos, resumen)
                 logger.info("[%d/%d] (búsqueda) '%s' -> ENCONTRADO", idx + 1, len(df), nombre)
             else:
                 self.expediente_encontrado = False
@@ -1192,10 +1221,8 @@ class AlfrescoExtractor:
                 })
                 logger.info("[%d/%d] (búsqueda) '%s' -> NO ENCONTRADO (pasa a reintento)", idx + 1, len(df), nombre)
 
-        ruta_reintento = self._ruta_csv_aux(ruta_resumen, "verificacion_alfresco_reintento.csv")
         if reintento:
-            pd.DataFrame(reintento).to_csv(ruta_reintento, index=False, encoding="utf-8-sig")
-            logger.info("FASE 1: %d no encontrados -> reintento: %s", len(reintento), ruta_reintento)
+            logger.info("FASE 1: %d no encontrados -> reintento.", len(reintento))
         else:
             logger.info("FASE 1: todos encontrados por búsqueda (sin reintento).")
 
@@ -1215,13 +1242,11 @@ class AlfrescoExtractor:
                     logger.error("Excepción en ruta manual '%s': %s", nombre, exc)
                     encontrado = False
                     self.expediente_encontrado = False
+                    self._cantidad_archivos = 0
                     self._ultima_traza = [{"NIVEL": "NAVEGACION", "VALOR": subserie, "ENCONTRADO": False}]
-                fila_resumen, filas_paso, exp_found = self._registrar_resultado(
+                _, _, exp_found = self._registrar_resultado(
                     nombre, uaa, serie, subserie, encontrado, pasos, resumen,
                 )
-                if ruta_pasos and ruta_resumen:
-                    self._append_csv(ruta_pasos, encabezados_pasos, filas_paso)
-                    self._append_csv(ruta_resumen, encabezados_resumen, [fila_resumen])
                 logger.info(
                     "[reintento %d/%d] '%s' -> %s",
                     j + 1, len(reintento), nombre,
@@ -1231,12 +1256,14 @@ class AlfrescoExtractor:
                 )
 
         # --- Resumen final + pendientes definitivos ---
-        ruta_pendientes = self._ruta_csv_aux(ruta_resumen, "verificacion_alfresco_pendientes.csv")
-        # Los pendientes no llevan la columna DESCRIPCION (solo el resumen principal).
+        ruta_pendientes = self._ruta_csv_aux(ruta_resumen, "verificacion_pendientes.csv")
         finales_no = [
             {k: v for k, v in r.items() if k != "DESCRIPCION"}
             for r in resumen if r["EXPEDIENTE_ENCONTRADO"] == "NO"
         ]
+        pd.DataFrame(resumen, columns=encabezados_resumen).to_csv(
+            ruta_resumen, index=False, encoding="utf-8-sig"
+        )
         pd.DataFrame(finales_no).to_csv(ruta_pendientes, index=False, encoding="utf-8-sig")
 
         logger.info(
@@ -1249,7 +1276,7 @@ class AlfrescoExtractor:
             "resumen": resumen,
             "reintento": reintento,
             "pendientes": finales_no,
-            "ruta_reintento": ruta_reintento,
+            "ruta_resumen": ruta_resumen,
             "ruta_pendientes": ruta_pendientes,
         }
 
@@ -1259,15 +1286,17 @@ class AlfrescoExtractor:
         ruta_pasos: Optional[str] = None,
         ruta_resumen: Optional[str] = None,
     ) -> dict:
-        if not ruta_pasos or not ruta_resumen:
-            carpeta = str(RESULTADOS_DIR)
-            ruta_pasos = ruta_pasos or os.path.join(carpeta, "verificacion_alfresco_pasos.csv")
-            ruta_resumen = ruta_resumen or os.path.join(carpeta, "verificacion_alfresco.csv")
-        logger.info("Salida incremental: pasos=%s | resumen=%s", ruta_pasos, ruta_resumen)
+        if not ruta_resumen:
+            ruta_resumen = os.path.join(str(RESULTADOS_DIR), "verificacion_alfresco.csv")
+        logger.info(
+            "Salida: resumen=%s | pendientes=%s",
+            ruta_resumen,
+            os.path.join(os.path.dirname(ruta_resumen) or ".", "verificacion_pendientes.csv"),
+        )
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
-       
+
             return self.verificar_expedientes_desde_csv(ruta_csv, ruta_pasos, ruta_resumen)
         except Exception as exc:
             logger.critical("Fallo en la verificación Alfresco desde CSV: %s", exc, exc_info=True)
@@ -1405,24 +1434,19 @@ def main():
 
         logger.info("Modo verificación por lotes desde CSV: %s", ruta_csv)
         resultados = extractor.ejecutar_verificacion_csv(ruta_csv)
-        pasos = resultados.get("pasos", [])
         resumen = resultados.get("resumen", [])
         if not resumen:
             logger.error("No se obtuvieron resultados del CSV.")
             sys.exit(1)
 
-        output_dir = str(RESULTADOS_DIR)
-        os.makedirs(output_dir, exist_ok=True)
-        ruta_pasos = os.path.join(output_dir, "verificacion_alfresco_pasos.csv")
-        ruta_resumen = os.path.join(output_dir, "verificacion_alfresco.csv")
-        pd.DataFrame(pasos).to_csv(ruta_pasos, index=False, encoding="utf-8-sig")
-        pd.DataFrame(resumen).to_csv(ruta_resumen, index=False, encoding="utf-8-sig")
+        ruta_resumen = resultados.get("ruta_resumen") or str(RESULTADOS_DIR / "verificacion_alfresco.csv")
+        ruta_pendientes = resultados.get("ruta_pendientes") or str(RESULTADOS_DIR / "verificacion_pendientes.csv")
 
         encontrados = sum(1 for r in resumen if r["MOTIVO"] == "")
         total = len(resumen)
         print(f"REGISTROS={total} SUBSERIE_OK={encontrados} NO_ENCONTRADOS={total - encontrados}")
-        print(f"PASOS_CSV={ruta_pasos}")
         print(f"RESUMEN_CSV={ruta_resumen}")
+        print(f"PENDIENTES_CSV={ruta_pendientes}")
         sys.exit(0 if encontrados > 0 else 1)
     except KeyboardInterrupt:
         logger.info("Proceso interrumpido por el usuario.")

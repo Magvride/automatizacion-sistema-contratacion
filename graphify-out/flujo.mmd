@@ -1,0 +1,76 @@
+flowchart TD
+    subgraph ENTRY["Entrada"]
+        GUI["AppContratacion (src/app_gui.py)<br/>._ejecutar | ._ejecutar_subproceso | ._ejecutar_en_proceso<br/>._construir_argumentos"]
+        CLI["main.py :: main()<br/>parsear_argumentos (Namespace)"]
+    end
+
+    ORQ["main.main() - Orquestador"]
+
+    subgraph CFG["Configuracion"]
+        CFS["construir_salidas()"]
+        CONF["src/config.py<br/>ruta_matriz_manual | ruta_ordenadores<br/>cargar_config_rutas -> dict vacio si falla"]
+    end
+
+    subgraph P1["FASE 1 - UISARD"]
+        U1["UISARDExtractor"]
+        U2["_leer_excel -> DataFrame"]
+    end
+
+    subgraph P2["FASE 2 - Conciliacion"]
+        C1["generar_consolidado (src/conciliacion_datos.py)"]
+        C2["leer_reporte -> DataFrame COLUMNAS_DESEADAS<br/>normalizar + texto_libre"]
+        C3["CSV 01 consolidado"]
+    end
+
+    subgraph P25["FASE 2.5 - Unificacion"]
+        V1["unir_consolidados (src/unificar_expedientes.py)"]
+        V2["_buscar_csv_propio (Financiero)<br/>_cargar_correos_ordenadores (matriz manual)"]
+        V3["_normalizar + _clave_contrato + _normalizar_nombre"]
+        V4["CSV 02 consolidado + indicador UISARD"]
+    end
+
+    subgraph P3["FASE 3 - Alfresco"]
+        A1["AlfrescoExtractor"]
+        A2["verificar_expedientes_desde_csv"]
+        A3["_buscar_expediente_por_busqueda (fast-path)<br/>_navegar_arbol (fallback ruta)"]
+        A4["_descargar_zip_en_carpeta<br/>_guardar_y_extraer -> ZIP/expediente"]
+        A5["registrar_resultado -> CSV resumen"]
+    end
+
+    subgraph P4["FASE MERGE + NOTIFICACION"]
+        M1["fase_merge_alfresco() - une resultado a CSV 02"]
+        N1["fase_notificacion() -> notificar_no_uisard()"]
+        N2["filtrar columna_no (sin UISARD)<br/>construir_mensajes (agrupa por correo)"]
+        N3["construir_cuerpo / formatear_plantilla<br/>guardar_borradores o enviar (SMTP)"]
+    end
+
+    LIMP["limpiar() -> limpieza.purgar_por_patron (rotacion)"]
+
+    GUI --> ORQ
+    CLI --> ORQ
+    ORQ --> CFS
+    CFS --> CONF
+
+    ORQ -->|L437| U1
+    ORQ -->|L439| C1
+    ORQ -->|L442| V1
+    ORQ -->|L452| A1
+    ORQ -->|L454| M1
+    ORQ -->|L455| N1
+    ORQ -->|L469| LIMP
+
+    U1 --> U2
+    U2 --> C2
+    C2 --> C3
+    C3 --> V1
+    V1 --> V2
+    V1 --> V3
+    V3 --> V4
+    V4 --> A1
+    A2 --> A3
+    A3 --> A4
+    A4 --> A5
+    A5 --> M1
+    M1 --> N1
+    N1 --> N2
+    N2 --> N3

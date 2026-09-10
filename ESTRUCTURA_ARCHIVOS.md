@@ -41,6 +41,7 @@ El orquestador `main.py` encadena de forma secuencial:
 2. **FASE 1 — UISARD:** descarga reportes por serie a `archivos/04_Contratos_Descargados_UISARD/`.
 3. **FASE 2 — Conciliación:** `conciliacion_datos.py` genera `archivos/05_Datos_filtrados/01_unificacion_tipo_contrato_UISARD.csv`.
 4. **FASE 2.5 — Unificación:** `unificar_expedientes.py` une los contratos del bloque propio con los datos UISARD por número de contrato y genera `archivos/05_Datos_filtrados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv` (rellena las columnas `uisard` y adjunta `NOMBRE EXPEDIENTE`/`UAA`/`SERIE`/`SUB-SERIE`).
-5. **FASE 3 — Alfresco:** `alfresco_extractor.py` verifica el CSV unido y guarda `verificacion_alfresco.csv` y `verificacion_alfresco_pasos.csv` en `archivos/05_Datos_filtrados/`, y los expedientes corroborados en `archivos/06_Expedientes/expedientes_verificados/`.
+5. **FASE 3 — Alfresco:** `alfresco_extractor.py` verifica el CSV unido y guarda únicamente `verificacion_alfresco.csv` (todos los registros con `alfresco` = SI/NO y `cantidad_archivos`) y `verificacion_pendientes.csv` (los no encontrados) en `archivos/05_Datos_filtrados/`, y los expedientes corroborados en `archivos/06_Expedientes/expedientes_verificados/`.
+6. **FASE 3.5 — Merge Alfresco:** agrega al consolidado `02_conciliacion_UISARD_NUEVAS_VERSIONES.csv` las columnas `alfresco` y `cantidad_archivos` (unión por `NOMBRE EXPEDIENTE`).
 
 Las credenciales de `uis_login_p1.py` se leen desde `UIS_LOGIN_USER`/`UIS_LOGIN_PASS` del `.env`. Si no existen, usa `UISARD_USER`/`UISARD_PASS`.

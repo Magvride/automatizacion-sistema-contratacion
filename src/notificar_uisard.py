@@ -179,8 +179,13 @@ def _guardar_borradores(msj_list: list, ruta: Path) -> None:
     logger.info("Borradores guardados en: %s", ruta)
 
 
-def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=None) -> dict:
-    """Genera y (opcionalmente) envía correos de contratos no registrados en UISARD.
+def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=None,
+                        columna_no="uisard") -> dict:
+    """Genera y (opcionalmente) envía correos para los registros con ``columna_no`` = NO.
+
+    Por defecto filtra la columna ``uisard`` (contratos no registrados en UISARD);
+    desde ``main.py`` se pasa ``columna_no="alfresco"`` para notificar a los
+    ordenadores cuyos expedientes no fueron encontrados en Alfresco.
 
     Devuelve un resumen: total registros revisados, sin_uisard, con_correo,
     sin_correo, y mensajes construidos.
@@ -196,12 +201,12 @@ def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=
 
     df = pd.read_csv(ruta_csv, encoding="utf-8-sig", dtype=str).fillna("")
 
-    if COLUMNA_UISARD not in df.columns:
-        logger.warning("El CSV %s no tiene la columna '%s'.", ruta_csv, COLUMNA_UISARD)
+    if columna_no not in df.columns:
+        logger.warning("El CSV %s no tiene la columna '%s'.", ruta_csv, columna_no)
         return {"total": len(df), "sin_uisard": 0, "con_correo": 0, "sin_correo": 0, "mensajes": 0}
 
     total = len(df)
-    sin_uisard = df[df[COLUMNA_UISARD].astype(str).str.strip().str.upper() == "NO"]
+    sin_uisard = df[df[columna_no].astype(str).str.strip().str.upper() == "NO"]
 
     mensajes = _construir_mensajes(sin_uisard, plantilla)
 
@@ -211,8 +216,8 @@ def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=
     ).sum()
 
     logger.info(
-        "Notificación: %d registros | %d sin UISARD | %d con correo | %d sin correo",
-        total, len(sin_uisard), con_correo, sin_correo,
+        "Notificación: %d registros | %d con '%s'=NO | %d con correo | %d sin correo",
+        total, len(sin_uisard), columna_no, con_correo, sin_correo,
     )
 
     if mensajes:
