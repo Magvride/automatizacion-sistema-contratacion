@@ -1,6 +1,8 @@
 import os
 import re
 import unicodedata
+import warnings
+import zipfile
 from copy import copy
 
 import openpyxl
@@ -45,6 +47,114 @@ COLUMNAS_EXPORTE = {
     "CENTRO DE COSTO": "centro_costo",
     "ORDENADOR DE GASTO CENTRO DE COSTO": "ordenador",
 }
+
+
+def cargar_libro(ruta, data_only=False):
+    """Carga un libro con openpyxl silenciando avisos conocidos y no relevantes.
+
+    - "Conditional Formatting extension is not supported": lo emite openpyxl porque
+      no modela el formato condicional extendido (x14) de la hoja SEGUIMIENTO. Ese
+      bloque se conserva aparte con ``preservar_formato_condicional``.
+    - "Workbook contains no default style": aviso inofensivo de los archivos
+      generados sin estilo por defecto; openpyxl aplica el suyo.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Conditional Formatting extension is not supported.*",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Workbook contains no default style.*",
+        )
+        return openpyxl.load_workbook(ruta, data_only=data_only)
+
+
+def _mapa_hojas_xml(libro_zip):
+    """Devuelve {nombre de hoja: ruta del XML de la hoja} dentro del .xlsx."""
+    libro = libro_zip.read("xl/workbook.xml").decode("utf-8")
+    relaciones = libro_zip.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+
+    destinos = {}
+    for etiqueta in re.findall(r"<Relationship\b[^>]*>", relaciones):
+        id_rel = re.search(r'Id="([^"]+)"', etiqueta)
+        destino = re.search(r'Target="([^"]+)"', etiqueta)
+
+        if id_rel and destino:
+            destinos[id_rel.group(1)] = destino.group(1)
+
+    mapa = {}
+    for nombre, id_rel in re.findall(
+        r'<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"', libro
+    ):
+        ruta = destinos.get(id_rel, "")
+
+        if ruta.startswith("/"):
+            ruta = ruta.lstrip("/")
+        else:
+            ruta = "xl/" + ruta
+
+        mapa[nombre] = ruta
+
+    return mapa
+
+
+def preservar_formato_condicional(archivo_origen, archivo_destino):
+    """Reinserta el formato condicional extendido (x14) que openpyxl descarta.
+
+    openpyxl no soporta el bloque <extLst> de formato condicional extendido y lo
+    elimina al guardar, con lo que se pierde el sombreado de la hoja SEGUIMIENTO.
+    Aquí se copia tal cual desde el libro original.
+    """
+    with zipfile.ZipFile(archivo_origen) as zip_origen:
+        extensiones = {}
+
+        for nombre, ruta in _mapa_hojas_xml(zip_origen).items():
+            xml = zip_origen.read(ruta).decode("utf-8")
+            coincidencia = re.search(r"<extLst>.*</extLst>", xml, re.DOTALL)
+
+            if coincidencia:
+                extensiones[nombre] = coincidencia.group(0)
+
+    if not extensiones:
+        return
+
+    with zipfile.ZipFile(archivo_destino) as zip_destino:
+        hojas_destino = _mapa_hojas_xml(zip_destino)
+        entradas = zip_destino.infolist()
+        contenido = {
+            info.filename: zip_destino.read(info.filename)
+            for info in entradas
+        }
+
+    cambios = False
+
+    for nombre, ruta in hojas_destino.items():
+        extension = extensiones.get(nombre)
+
+        if not extension:
+            continue
+
+        xml = contenido[ruta].decode("utf-8")
+
+        if "<extLst>" in xml:
+            continue
+
+        contenido[ruta] = xml.replace(
+            "</worksheet>", extension + "</worksheet>"
+        ).encode("utf-8")
+        cambios = True
+
+    if not cambios:
+        return
+
+    ruta_temporal = str(archivo_destino) + ".tmp"
+
+    with zipfile.ZipFile(ruta_temporal, "w", zipfile.ZIP_DEFLATED) as zip_nuevo:
+        for info in entradas:
+            zip_nuevo.writestr(info, contenido[info.filename])
+
+    os.replace(ruta_temporal, str(archivo_destino))
 
 
 def buscar_archivo_contratos():
@@ -170,12 +280,22 @@ def recalcular_con_excel(ruta_archivo, timeout=EXCEL_ESPERA_SEGUNDOS):
     ruta = str(ruta_archivo)
     app = None
     try:
-        app = win32com.Dispatch("Excel.Application")
+        # DispatchEx crea una instancia de Excel PROPIA. Con Dispatch(), si el
+        # usuario ya tiene Excel abierto, se reutiliza esa instancia: cualquier
+        # diálogo abierto la bloquea (la automatización se queda esperando) y al
+        # terminar app.Quit() cerraría los libros del usuario.
+        app = win32com.DispatchEx("Excel.Application")
         app.DisplayAlerts = False
         app.Visible = False
         app.ScreenUpdating = False
         # En algunos equipos puede tardar en aparecer la ventana.
         app.EnableEvents = False
+        # Evita que un diálogo oculto (enlaces externos, reparar archivo, etc.)
+        # deje la llamada COM bloqueada indefinidamente.
+        app.Interactive = False
+        app.AskToUpdateLinks = False
+
+        print("[Paso 2] Abriendo Excel para recalcular (puede tardar)…", flush=True)
 
         # Workbook con protección de estructura no se puede guardar con guiones: desactivarla.
         libro = app.Workbooks.Open(
@@ -200,7 +320,7 @@ def recalcular_con_excel(ruta_archivo, timeout=EXCEL_ESPERA_SEGUNDOS):
 
         libro.Save()
         libro.Close(SaveChanges=False)
-        print("[OK] Excel recalculó y guardó los valores de las fórmulas.")
+        print("[OK] Excel recalculó y guardó los valores de las fórmulas.", flush=True)
         return True
 
     except Exception as exc:
@@ -225,10 +345,14 @@ def main():
 
     archivo_contratos = buscar_archivo_contratos()
 
-    # Se cargan las fórmulas, no los valores calculados.
-    wb_matriz = openpyxl.load_workbook(ARCHIVO_MATRIZ, data_only=False)
+    print("[Paso 2] Leyendo la matriz manual (puede tardar unos segundos)…", flush=True)
 
-    wb_origen = openpyxl.load_workbook(archivo_contratos, data_only=False)
+    # Se cargan las fórmulas, no los valores calculados.
+    wb_matriz = cargar_libro(ARCHIVO_MATRIZ, data_only=False)
+
+    wb_origen = cargar_libro(archivo_contratos, data_only=False)
+
+    print("[Paso 2] Matriz y contratos cargados.", flush=True)
 
     ws_maestro = wb_matriz[HOJA_MAESTRO]
     ws_seguimiento = wb_matriz[HOJA_SEGUIMIENTO]
@@ -414,7 +538,14 @@ def main():
     except Exception:
         pass
 
+    print("[Paso 2] Guardando la matriz actualizada (puede tardar)…", flush=True)
     wb_matriz.save(ARCHIVO_SALIDA)
+
+    # openpyxl no soporta el formato condicional extendido (x14) y lo elimina al
+    # guardar. Se reinserta desde la matriz original para no perder el sombreado.
+    preservar_formato_condicional(ARCHIVO_MATRIZ, ARCHIVO_SALIDA)
+
+    print(f"[Paso 2] Matriz guardada ({len(contratos_agregados)} contratos nuevos).", flush=True)
 
     # Recalcular con Excel para que las fórmulas de SEGUIMIENTO (y demás hojas
     # calculadas) queden con su valor guardado y no aparezcan vacías al abrir.
