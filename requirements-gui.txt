@@ -1,0 +1,4 @@
+# Dependencias de la interfaz de escritorio y del empaquetado.
+# El runtime ETL del backend sigue en requirements.txt.
+PyQt6>=6.6.0
+pyinstaller>=6.0.0
