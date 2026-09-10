@@ -138,7 +138,7 @@ class EtlPipeline:
         self._emitir("alfresco", "running", 80, "Incorporando resultados al consolidado…")
         main.fase_merge_alfresco(args, salidas)
 
-        ruta = os.path.join(str(RESULTADOS_DIR), "verificacion_alfresco.csv")
+        ruta = os.path.join(str(RESULTADOS_DIR), "06_Verificacion_Alfresco.csv")
         registros = self._contar_filas(ruta)
         return {"registros": registros, "detalle": f"{registros} expedientes"}
 

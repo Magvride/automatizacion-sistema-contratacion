@@ -3,7 +3,7 @@
 FASE 2.5 — Unificación.
 
 Une el bloque propio (contratos del sistema Financiero UIS, ``contratos_normalizados.csv``)
-con el bloque UISARD (``01_unificacion_tipo_contrato_UISARD.csv``) usando el número de contrato como clave.
+con el bloque UISARD (``01_Contratos_en_UISARD.csv``) usando el número de contrato como clave.
 
 El bloque propio deja la columna ``uisard`` (y ``correo_ordenador``) vacía; esta fase las
 completa cuando el contrato existe en UISARD y adjunta la ruta del expediente
@@ -161,8 +161,18 @@ def unir_consolidados(ruta_base: str, df_uisard: pd.DataFrame, ruta_salida: str)
     uis_import = uis[columnas_uis].copy()
     uis_import["_clave"] = uis_import["NÚMERO CONTRATO"].map(_clave_contrato)
 
-    merged = base.merge(uis_import, on="_clave", how="left")
+    # how="outer": conserva la unión completa de los tres grupos:
+    #   1) propios que SÍ están en UISARD,
+    #   2) propios que NO están en UISARD,
+    #   3) los que solo existen en UISARD (no vienen del bloque propio).
+    merged = base.merge(uis_import, on="_clave", how="outer")
     merged = merged.fillna("")
+
+    # Las filas que solo vienen de UISARD no traen 'contrato'; se completa con el
+    # número de contrato del reporte UISARD para poder identificarlas.
+    if "contrato" in merged.columns and "NÚMERO CONTRATO" in merged.columns:
+        sin_contrato = merged["contrato"].astype(str).str.strip() == ""
+        merged.loc[sin_contrato, "contrato"] = merged.loc[sin_contrato, "NÚMERO CONTRATO"]
 
     # Completa el correo usando el archivo manual de ordenadores más reciente.
     correos_ordenadores = _cargar_correos_ordenadores()
@@ -183,6 +193,14 @@ def unir_consolidados(ruta_base: str, df_uisard: pd.DataFrame, ruta_salida: str)
     # Indicador de presencia en UISARD (rellena la columna que el bloque propio dejó vacía).
     if "NOMBRE EXPEDIENTE" in merged.columns:
         merged["uisard"] = merged["NOMBRE EXPEDIENTE"].map(lambda v: "SI" if str(v).strip() else "NO")
+
+    # Origen de cada fila: sirve para el dashboard y el informe del proceso.
+    claves_base = set(base["_clave"])
+    claves_uis = set(uis_import["_clave"])
+    merged["origen"] = merged["_clave"].map(
+        lambda k: "AMBOS" if (k in claves_base and k in claves_uis)
+        else ("NUEVAS VERSIONES" if k in claves_base else "UISARD")
+    )
     merged.drop(columns=["_clave"], inplace=True)
 
     con_uisard = int((merged["uisard"] == "SI").sum())

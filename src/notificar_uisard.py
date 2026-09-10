@@ -2,12 +2,12 @@
 """
 Notificación a ordenadores de gasto con contratos NO registrados en UISARD.
 
-Lee ``archivos/05_Datos_filtrados/02_conciliacion_UISARD_NUEVAS_VERSIONES.csv`` (o el CSV que indique ``main.py``),
+Lee ``archivos/05_Datos_filtrados/03_Resultado_Final.xlsx`` (o el CSV/XLSX que indique ``main.py``),
 busca los registros cuya columna ``uisard`` es ``NO``, agrupa por ``correo_ordenador`` y
 arma un correo por destinatario con la plantilla configurable.
 
 Modo simulación (por defecto): no envía correos. Arma los mensajes, los escribe a un
-archivo de borradores (``borradores_correos_uisard.txt``) y los registra en log.
+archivo de borradores (``08_Correos_a_Ordenadores.txt``) y los registra en log.
 Para enviar de verdad use ``--enviar-correos`` (o llame con ``enviar=True``).
 
 La plantilla se lee de ``NOTIFICAR_PLANTILLA`` en el .env; admite los campos
@@ -179,6 +179,13 @@ def _guardar_borradores(msj_list: list, ruta: Path) -> None:
     logger.info("Borradores guardados en: %s", ruta)
 
 
+def _leer_tabla(ruta: str) -> pd.DataFrame:
+    """Lee CSV o Excel (según la extensión) y devuelve un DataFrame sin NaN."""
+    if str(ruta).lower().endswith((".xlsx", ".xls")):
+        return pd.read_excel(ruta, dtype=str, engine="openpyxl").fillna("")
+    return pd.read_csv(ruta, encoding="utf-8-sig", dtype=str).fillna("")
+
+
 def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=None,
                         columna_no="uisard") -> dict:
     """Genera y (opcionalmente) envía correos para los registros con ``columna_no`` = NO.
@@ -190,16 +197,16 @@ def notificar_no_uisard(ruta_csv=None, plantilla=None, enviar=False, borradores=
     Devuelve un resumen: total registros revisados, sin_uisard, con_correo,
     sin_correo, y mensajes construidos.
     """
-    ruta_csv = str(ruta_csv or (RESULTADOS_DIR / "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"))
+    ruta_csv = str(ruta_csv or (RESULTADOS_DIR / "03_Resultado_Final.xlsx"))
     plantilla = plantilla or _variable("NOTIFICAR_PLANTILLA", PLANTILLA_POR_DEFECTO)
     enviar = enviar or _permiso_envio()
-    borradores = borradores or (RESULTADOS_DIR / "borradores_correos_uisard.txt")
+    borradores = borradores or (RESULTADOS_DIR / "08_Correos_a_Ordenadores.txt")
 
     if not os.path.isfile(ruta_csv):
         logger.warning("No existe %s; no se puede notificar.", ruta_csv)
         return {"total": 0, "sin_uisard": 0, "con_correo": 0, "sin_correo": 0, "mensajes": 0}
 
-    df = pd.read_csv(ruta_csv, encoding="utf-8-sig", dtype=str).fillna("")
+    df = _leer_tabla(ruta_csv)
 
     if columna_no not in df.columns:
         logger.warning("El CSV %s no tiene la columna '%s'.", ruta_csv, columna_no)

@@ -26,7 +26,7 @@ from config import REPORTES_DIR, RESULTADOS_DIR
 logger = configurar_logger("conciliacion")
 
 RUTA_REPORTES = str(REPORTES_DIR)
-RUTA_SALIDA = str(RESULTADOS_DIR / "01_unificacion_tipo_contrato_UISARD.csv")
+RUTA_SALIDA = str(RESULTADOS_DIR / "01_Contratos_en_UISARD.csv")
 
 COLUMNAS_DESEADAS = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
 

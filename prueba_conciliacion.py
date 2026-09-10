@@ -4,9 +4,9 @@
 Flujo que reproduce la parte de conciliación del sistema:
   1) Normaliza el Excel descargado (InformacionContratos*.xls) -> contratos_normalizados.csv
      (bloque propio, columnas: contrato, centro_costo, ordenador, correo_ordenador, uisard).
-  2) Genera el consolidado UISARD (01_unificacion_tipo_contrato_UISARD.csv) a partir de los
+  2) Genera el consolidado UISARD (01_Contratos_en_UISARD.csv) a partir de los
      reportes de archivos/04_Contratos_Descargados_UISARD.
-  3) Une ambos por número de contrato -> 02_conciliacion_UISARD_NUEVAS_VERSIONES.csv.
+  3) Une ambos por número de contrato -> 02_Consolidado_General.csv.
 
 Uso:
   python prueba_conciliacion.py
@@ -34,8 +34,8 @@ from conciliacion_datos import generar_consolidado
 from unificar_expedientes import unir_consolidados
 
 RUTA_PROPIO = EXTRACCION_DIR / "contratos_normalizados.csv"
-RUTA_01 = RESULTADOS_DIR / "01_unificacion_tipo_contrato_UISARD.csv"
-RUTA_02 = RESULTADOS_DIR / "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"
+RUTA_01 = RESULTADOS_DIR / "01_Contratos_en_UISARD.csv"
+RUTA_02 = RESULTADOS_DIR / "02_Consolidado_General.csv"
 
 
 def normalizar(texto):
