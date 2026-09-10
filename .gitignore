@@ -1,14 +1,16 @@
-
 # Credenciales y sesión local
 .env
-archivos/sesion/
+.env.*
+!.env.example
 
-# Archivos generados por las ejecuciones
-archivos/01_Contratos_Descargados/
-archivos/02_Matriz_actualizada/
-archivos/03_Contratos_Conciliacion/
-archivos/05_Datos_filtrados/
-archivos/06_Expedientes/
+# Datos y archivos generados: solo se versiona la estructura de carpetas
+archivos/**
+!archivos/**/
+!archivos/**/.gitkeep
+!archivos/00_Datos_Raw/descripcion.txt
+
+# Artefactos generados por las ejecuciones / herramientas
+graphify-out/
 logs/
 output/
 __pycache__/
