@@ -50,8 +50,11 @@ def construir_salidas(base_dir: str) -> dict:
     return {
         "carpeta": carpeta,
         "reportes": str(REPORTES_DIR),
-        "csv": os.path.join(carpeta, "01_unificacion_tipo_contrato_UISARD.csv"),
-        "verificacion": os.path.join(carpeta, "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"),
+        "csv": os.path.join(carpeta, "01_Contratos_en_UISARD.csv"),
+        "verificacion": os.path.join(carpeta, "02_Consolidado_General.csv"),
+        "resultados": os.path.join(carpeta, "03_Resultado_Final.xlsx"),
+        "dashboard": os.path.join(carpeta, "04_Tablero_Resumen.html"),
+        "dashboard_vivo": os.path.join(carpeta, "05_Tablero_en_Vivo.html"),
     }
 
 
@@ -191,8 +194,8 @@ def fase_notificacion(args, salidas: dict, ruta_unificado: Optional[str] = None)
 
     from src.notificar_uisard import notificar_no_uisard
 
-    ruta_csv = args.ruta_unificado or ruta_unificado or os.path.join(
-        salidas["carpeta"], "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"
+    ruta_csv = args.ruta_unificado or ruta_unificado or salidas.get(
+        "resultados", os.path.join(salidas["carpeta"], "03_Resultado_Final.xlsx")
     )
     resumen = notificar_no_uisard(ruta_csv, enviar=args.enviar_correos, columna_no="alfresco")
     logger.info(
@@ -235,17 +238,24 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
         rapido=not args.lento,
         descargar_zip=not args.no_zip,
     )
-    resultados = extractor.ejecutar_verificacion_csv(ruta_csv)
+    # El reporte maestro 03 y los dashboards se refrescan en vivo tras cada expediente.
+    resultados = extractor.ejecutar_verificacion_csv(
+        ruta_csv,
+        ruta_consolidado=salidas.get("verificacion"),
+        ruta_resultados=salidas.get("resultados"),
+        ruta_dashboard=salidas.get("dashboard"),
+        ruta_vivo=salidas.get("dashboard_vivo"),
+    )
     resumen = resultados.get("resumen", [])
     if not resumen:
         logger.error("No se obtuvieron resultados de la verificación Alfresco.")
         sys.exit(1)
 
     ruta_resumen = resultados.get("ruta_resumen") or os.path.join(
-        salidas["carpeta"], "verificacion_alfresco.csv"
+        salidas["carpeta"], "06_Verificacion_Alfresco.csv"
     )
     ruta_pendientes = resultados.get("ruta_pendientes") or os.path.join(
-        salidas["carpeta"], "verificacion_pendientes.csv"
+        salidas["carpeta"], "07_Expedientes_Faltantes.csv"
     )
 
     encontrados = sum(1 for r in resumen if r.get("MOTIVO") == "")
@@ -267,8 +277,8 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
 def fase_merge_alfresco(args, salidas: dict) -> str:
     """Une el resultado de la verificación Alfresco al consolidado 02.
 
-    Lee ``verificacion_alfresco.csv`` y agrega al consolidado
-    ``02_conciliacion_UISARD_NUEVAS_VERSIONES.csv`` las columnas ``alfresco``
+    Lee ``06_Verificacion_Alfresco.csv`` y agrega al consolidado
+    ``02_Consolidado_General.csv`` las columnas ``alfresco``
     (SI/NO) y ``cantidad_archivos`` (n.º de archivos del ZIP corroborado), uniendo
     por ``NOMBRE EXPEDIENTE``. Devuelve la ruta del consolidado 02 enriquecido.
     """
@@ -276,9 +286,9 @@ def fase_merge_alfresco(args, salidas: dict) -> str:
     logger.info("FASE 3.5: Incorporación de resultados Alfresco al consolidado 02")
     logger.info("=" * 60)
 
-    ruta_verificacion = os.path.join(salidas["carpeta"], "verificacion_alfresco.csv")
+    ruta_verificacion = os.path.join(salidas["carpeta"], "06_Verificacion_Alfresco.csv")
     ruta_consolidado = os.path.join(
-        salidas["carpeta"], "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"
+        salidas["carpeta"], "02_Consolidado_General.csv"
     )
 
     if not os.path.isfile(ruta_verificacion):
@@ -321,6 +331,63 @@ def fase_merge_alfresco(args, salidas: dict) -> str:
         int((cons["alfresco"].astype(str).str.upper() == "SI").sum()),
     )
     return ruta_consolidado
+
+
+# ----------------------------------------------------------------------
+#  FASE 3.6 — Reporte maestro final (03_Resultado_Final)
+# ----------------------------------------------------------------------
+def fase_resultados(args, salidas: dict) -> str:
+    """Genera el reporte maestro final ``03_Resultado_Final.xlsx`` y su dashboard.
+
+    Resume, por contrato, si está en UISARD y si el expediente se encontró en
+    Alfresco (con el número de archivos). Es el insumo del envío final.
+    """
+    logger.info("=" * 60)
+    logger.info("FASE 3.6: Reporte maestro de resultados y dashboard")
+    logger.info("=" * 60)
+
+    from src.resultados import generar_reporte
+    from src.dashboard import generar_dashboard
+
+    ruta_consolidado = os.path.join(
+        salidas["carpeta"], "02_Consolidado_General.csv"
+    )
+    ruta_verificacion = os.path.join(salidas["carpeta"], "06_Verificacion_Alfresco.csv")
+    ruta_salida = salidas.get("resultados") or os.path.join(
+        salidas["carpeta"], "03_Resultado_Final.xlsx"
+    )
+
+    if not os.path.isfile(ruta_consolidado):
+        logger.warning("No existe %s; no se puede generar el reporte maestro.", ruta_consolidado)
+        return ""
+
+    cons = pd.read_csv(ruta_consolidado, encoding="utf-8-sig", dtype=str).fillna("")
+
+    # El estado de Alfresco se toma directo de la verificación (no depende de que
+    # el consolidado 02 ya esté enriquecido), para que 03 siempre refleje lo real.
+    verificacion = None
+    if os.path.isfile(ruta_verificacion):
+        verificacion = pd.read_csv(
+            ruta_verificacion, encoding="utf-8-sig", dtype=str
+        ).fillna("")
+    else:
+        logger.warning(
+            "No existe %s; el reporte maestro quedará sin estado de Alfresco.",
+            ruta_verificacion,
+        )
+
+    df = generar_reporte(cons, verificacion, ruta=ruta_salida)
+
+    ruta_dashboard = salidas.get("dashboard") or os.path.join(
+        salidas["carpeta"], "04_Tablero_Resumen.html"
+    )
+    generar_dashboard(df, ruta_dashboard)
+
+    if "estado" in df.columns:
+        resumen = df["estado"].value_counts().to_dict()
+        logger.info("Resumen del reporte maestro: %s", resumen)
+    logger.info("Reporte maestro final: %s (%d filas)", ruta_salida, len(df))
+    return ruta_salida
 
 
 def parsear_argumentos() -> argparse.Namespace:
@@ -452,6 +519,8 @@ def main():
         fase_alfresco(args, salidas)
         # Se incorpora el resultado al consolidado 02 (alfresco + cantidad_archivos).
         fase_merge_alfresco(args, salidas)
+        # Reporte maestro final (resumen de UISARD + archivos encontrados).
+        fase_resultados(args, salidas)
         fase_notificacion(args, salidas)
         logger.info("Proceso completo: bloque propio y bloque UISARD/Alfresco finalizados.")
 

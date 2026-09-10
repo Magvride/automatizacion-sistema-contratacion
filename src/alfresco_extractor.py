@@ -30,6 +30,8 @@ from selenium.common.exceptions import (
 
 from utils.logger import configurar_logger
 from config import RESULTADOS_DIR, EXHIBITOS_VERIFICADOS_DIR
+from resultados import construir_resultados, guardar_resultados
+from dashboard import generar_dashboard, generar_estado_vivo
 
 logger = configurar_logger("alfresco")
 
@@ -1140,11 +1142,84 @@ class AlfrescoExtractor:
         resumen.append(fila_resumen)
         return fila_resumen, filas_paso, exp_found
 
+    def _leer_consolidado(self, ruta_consolidado) -> pd.DataFrame:
+        """Carga el consolidado 02 (o devuelve vacío si no existe/falla)."""
+        if not ruta_consolidado or not os.path.isfile(ruta_consolidado):
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(ruta_consolidado, encoding="utf-8-sig", dtype=str).fillna("")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("No se pudo leer el consolidado para las salidas en vivo: %s", exc)
+            return pd.DataFrame()
+
+    def _actualizar_salidas(
+        self,
+        resumen,
+        ruta_consolidado=None,
+        ruta_resultados=None,
+        ruta_dashboard=None,
+    ):
+        """Refresca 03_Resultado_Final.xlsx y el dashboard con lo verificado hasta ahora.
+
+        Se llama tras cada expediente para poder seguir el avance en vivo. Los
+        errores de escritura (p. ej. el Excel abierto) no detienen el flujo.
+        """
+        consolidado = self._leer_consolidado(ruta_consolidado)
+        try:
+            df = construir_resultados(consolidado, resumen)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("No se pudo construir el reporte de resultados: %s", exc)
+            return
+
+        if ruta_resultados:
+            try:
+                guardar_resultados(df, ruta_resultados)
+            except PermissionError:
+                logger.debug("03_Resultado_Final.xlsx está abierto; se omite la actualización en vivo.")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("No se pudo actualizar 03_Resultado_Final en vivo: %s", exc)
+
+        if ruta_dashboard:
+            try:
+                generar_dashboard(df, ruta_dashboard)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("No se pudo actualizar el dashboard en vivo: %s", exc)
+
+    def _volcar_estado_vivo(
+        self,
+        ruta_vivo,
+        expediente,
+        indice,
+        total,
+        fase,
+        resumen,
+        estado="BUSCANDO",
+    ):
+        """Refresca el panel en tiempo real con el expediente que se está buscando."""
+        if not ruta_vivo:
+            return
+        try:
+            generar_estado_vivo(
+                expediente=expediente,
+                indice=indice,
+                total=total,
+                fase=fase,
+                resumen=resumen,
+                ruta=ruta_vivo,
+                estado=estado,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("No se pudo actualizar el dashboard en vivo: %s", exc)
+
     def verificar_expedientes_desde_csv(
         self,
         ruta_csv: str,
         ruta_pasos: Optional[str] = None,
         ruta_resumen: Optional[str] = None,
+        ruta_consolidado: Optional[str] = None,
+        ruta_resultados: Optional[str] = None,
+        ruta_dashboard: Optional[str] = None,
+        ruta_vivo: Optional[str] = None,
     ) -> dict:
         """Verifica en dos fases: primero búsqueda (header + searchTerm), luego ruta manual.
 
@@ -1154,8 +1229,8 @@ class AlfrescoExtractor:
         (Repositorio -> UAA -> SERIE -> SUB-SERIE -> expediente).
 
         La prueba de hallazgo es el ZIP corroborado con >= 1 archivo (columna
-        ``cantidad_archivos``). Genera solo dos salidas: ``verificacion_alfresco.csv``
-        (todos los registros) y ``verificacion_pendientes.csv`` (los no encontrados).
+        ``cantidad_archivos``). Genera solo dos salidas: ``06_Verificacion_Alfresco.csv``
+        (todos los registros) y ``07_Expedientes_Faltantes.csv`` (los no encontrados).
         """
         try:
             df = pd.read_csv(ruta_csv, encoding="utf-8-sig")
@@ -1199,6 +1274,9 @@ class AlfrescoExtractor:
                 logger.debug("Fila %d ignorada (nombre/uaa vacío).", idx)
                 continue
 
+            self._volcar_estado_vivo(
+                ruta_vivo, nombre, idx + 1, len(df), "BÚSQUEDA", resumen, "BUSCANDO"
+            )
             try:
                 encontrado = self._buscar_expediente_por_busqueda(nombre, uaa=uaa, serie=serie)
             except Exception as exc:
@@ -1212,6 +1290,10 @@ class AlfrescoExtractor:
                 self._traza("BUSQUEDA", nombre, True)
                 logger.info("Fast path: '%s' localizado vía buscador global.", nombre)
                 self._registrar_resultado(nombre, uaa, serie, subserie, True, pasos, resumen)
+                self._actualizar_salidas(resumen, ruta_consolidado, ruta_resultados, ruta_dashboard)
+                self._volcar_estado_vivo(
+                    ruta_vivo, nombre, idx + 1, len(df), "BÚSQUEDA", resumen, "ENCONTRADO"
+                )
                 logger.info("[%d/%d] (búsqueda) '%s' -> ENCONTRADO", idx + 1, len(df), nombre)
             else:
                 self.expediente_encontrado = False
@@ -1219,6 +1301,9 @@ class AlfrescoExtractor:
                 reintento.append({
                     "NOMBRE EXPEDIENTE": nombre, "UAA": uaa, "SERIE": serie, "SUB-SERIE": subserie,
                 })
+                self._volcar_estado_vivo(
+                    ruta_vivo, nombre, idx + 1, len(df), "BÚSQUEDA", resumen, "REINTENTO"
+                )
                 logger.info("[%d/%d] (búsqueda) '%s' -> NO ENCONTRADO (pasa a reintento)", idx + 1, len(df), nombre)
 
         if reintento:
@@ -1236,6 +1321,10 @@ class AlfrescoExtractor:
                 uaa = item["UAA"]
                 serie = item["SERIE"]
                 subserie = item["SUB-SERIE"]
+                self._volcar_estado_vivo(
+                    ruta_vivo, nombre, len(df) - len(reintento) + j + 1, len(df),
+                    "RUTA MANUAL", resumen, "BUSCANDO",
+                )
                 try:
                     encontrado = self._navegar_arbol(uaa, serie, subserie, nombre)
                 except Exception as exc:
@@ -1247,6 +1336,11 @@ class AlfrescoExtractor:
                 _, _, exp_found = self._registrar_resultado(
                     nombre, uaa, serie, subserie, encontrado, pasos, resumen,
                 )
+                self._actualizar_salidas(resumen, ruta_consolidado, ruta_resultados, ruta_dashboard)
+                self._volcar_estado_vivo(
+                    ruta_vivo, nombre, len(df) - len(reintento) + j + 1, len(df),
+                    "RUTA MANUAL", resumen, "LISTO",
+                )
                 logger.info(
                     "[reintento %d/%d] '%s' -> %s",
                     j + 1, len(reintento), nombre,
@@ -1256,7 +1350,7 @@ class AlfrescoExtractor:
                 )
 
         # --- Resumen final + pendientes definitivos ---
-        ruta_pendientes = self._ruta_csv_aux(ruta_resumen, "verificacion_pendientes.csv")
+        ruta_pendientes = self._ruta_csv_aux(ruta_resumen, "07_Expedientes_Faltantes.csv")
         finales_no = [
             {k: v for k, v in r.items() if k != "DESCRIPCION"}
             for r in resumen if r["EXPEDIENTE_ENCONTRADO"] == "NO"
@@ -1285,19 +1379,26 @@ class AlfrescoExtractor:
         ruta_csv: str,
         ruta_pasos: Optional[str] = None,
         ruta_resumen: Optional[str] = None,
+        ruta_consolidado: Optional[str] = None,
+        ruta_resultados: Optional[str] = None,
+        ruta_dashboard: Optional[str] = None,
+        ruta_vivo: Optional[str] = None,
     ) -> dict:
         if not ruta_resumen:
-            ruta_resumen = os.path.join(str(RESULTADOS_DIR), "verificacion_alfresco.csv")
+            ruta_resumen = os.path.join(str(RESULTADOS_DIR), "06_Verificacion_Alfresco.csv")
         logger.info(
             "Salida: resumen=%s | pendientes=%s",
             ruta_resumen,
-            os.path.join(os.path.dirname(ruta_resumen) or ".", "verificacion_pendientes.csv"),
+            os.path.join(os.path.dirname(ruta_resumen) or ".", "07_Expedientes_Faltantes.csv"),
         )
         try:
             self.driver = self._iniciar_driver()
             self.autenticar()
 
-            return self.verificar_expedientes_desde_csv(ruta_csv, ruta_pasos, ruta_resumen)
+            return self.verificar_expedientes_desde_csv(
+                ruta_csv, ruta_pasos, ruta_resumen,
+                ruta_consolidado, ruta_resultados, ruta_dashboard, ruta_vivo,
+            )
         except Exception as exc:
             logger.critical("Fallo en la verificación Alfresco desde CSV: %s", exc, exc_info=True)
             return {"pasos": [], "resumen": []}
@@ -1373,7 +1474,7 @@ def parsear_argumentos() -> argparse.Namespace:
         default=None,
         help=(
             "Ruta a un CSV con columnas 'NOMBRE EXPEDIENTE', 'UAA' y 'SERIE' "
-            "para verificar todas las rutas (ej. archivos/05_Datos_filtrados/01_unificacion_tipo_contrato_UISARD.csv)."
+            "para verificar todas las rutas (ej. archivos/05_Datos_filtrados/01_Contratos_en_UISARD.csv)."
         ),
     )
     parser.add_argument(
@@ -1425,7 +1526,7 @@ def main():
             print(f"RUTA_ENCONTRADA={encontrado}")
             sys.exit(0 if encontrado else 1)
         else:
-            ruta_csv = str(RESULTADOS_DIR / "01_unificacion_tipo_contrato_UISARD.csv")
+            ruta_csv = str(RESULTADOS_DIR / "01_Contratos_en_UISARD.csv")
             logger.info("Sin --csv: se usa el inicio por defecto %s", ruta_csv)
 
         if not os.path.isfile(ruta_csv):
@@ -1439,8 +1540,8 @@ def main():
             logger.error("No se obtuvieron resultados del CSV.")
             sys.exit(1)
 
-        ruta_resumen = resultados.get("ruta_resumen") or str(RESULTADOS_DIR / "verificacion_alfresco.csv")
-        ruta_pendientes = resultados.get("ruta_pendientes") or str(RESULTADOS_DIR / "verificacion_pendientes.csv")
+        ruta_resumen = resultados.get("ruta_resumen") or str(RESULTADOS_DIR / "06_Verificacion_Alfresco.csv")
+        ruta_pendientes = resultados.get("ruta_pendientes") or str(RESULTADOS_DIR / "07_Expedientes_Faltantes.csv")
 
         encontrados = sum(1 for r in resumen if r["MOTIVO"] == "")
         total = len(resumen)
