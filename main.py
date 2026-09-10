@@ -19,15 +19,15 @@ if not getattr(sys, "frozen", False):
     if _SRC_DIR not in sys.path:
         sys.path.insert(0, _SRC_DIR)
 
-from utils.logger import configurar_logger
+from src.utils.logger import configurar_logger
 
 logger = configurar_logger("main")
 
-from uisard_extractor import UISARDExtractor
-from conciliacion_datos import generar_consolidado
-from alfresco_extractor import AlfrescoExtractor
-from utils.limpieza import limpiar
-from config import REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
+from src.uisard_extractor import UISARDExtractor
+from src.conciliacion_datos import generar_consolidado
+from src.alfresco_extractor import AlfrescoExtractor
+from src.utils.limpieza import limpiar
+from src.config import REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
 
 if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
@@ -60,7 +60,7 @@ def construir_salidas(base_dir: str) -> dict:
 # ----------------------------------------------------------------------
 def paso_login_financiero(fecha_inicio: date, fecha_fin: date) -> None:
     """Descarga el Excel y omite únicamente la pausa final de cierre."""
-    import uis_login_p1
+    import src.uis_login_p1
 
     original_input = builtins.input
 
@@ -73,13 +73,13 @@ def paso_login_financiero(fecha_inicio: date, fecha_fin: date) -> None:
     builtins.input = input_del_flujo
     try:
         print("[MAIN] Paso 1/5: login y descarga del reporte financiero")
-        uis_login_p1.main(fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
+        src.uis_login_p1.main(fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
     finally:
         builtins.input = original_input
 
 
 def ejecutar_bloque_propio(args) -> None:
-    import seguimiento_p2
+    import src.seguimiento_p2
 
     if args.skip_financiero:
         logger.info("--skip-financiero: se omite el bloque propio.")
@@ -87,7 +87,7 @@ def ejecutar_bloque_propio(args) -> None:
 
     paso_login_financiero(args.fecha_inicio, args.fecha_fin)
     print("[MAIN] Paso 2/5: actualización de la matriz de seguimiento")
-    seguimiento_p2.main()
+    src.seguimiento_p2.main()
 
 
 # ----------------------------------------------------------------------
@@ -108,6 +108,8 @@ def fase_uisard(args) -> None:
         contrasena=getenv("UISARD_PASS", True),
         fecha_inicio=args.fecha_inicio.strftime("%Y-%m-%d"),
         fecha_fin=args.fecha_fin.strftime("%Y-%m-%d"),
+        #fecha_inicio="2026-09-08",
+        #fecha_fin="2026-09-08"
     )
     # Descarga los reportes por serie a archivos/04_Contratos_Descargados_UISARD/ (alimenta la FASE 2).
     extractor.ejecutar_extraccion()
@@ -156,23 +158,23 @@ def fase_unificacion(args, salidas: dict, df_uisard: pd.DataFrame) -> str:
     logger.info("FASE 2.5: Unificación por número de contrato")
     logger.info("=" * 60)
 
-    from unificar_expedientes import _buscar_csv_propio, unir_consolidados
+    from src.unificar_expedientes import _buscar_csv_propio, unir_consolidados
 
     ruta_base = _buscar_csv_propio()
-    if args.skip_financiero and not ruta_base:
-        logger.info("--skip-financiero sin CSV propio: se usa el consolidado UISARD directo.")
-        return salidas["csv"]
+    if ruta_base and os.path.isfile(ruta_base):
+        resultado = unir_consolidados(ruta_base, df_uisard, salidas["verificacion"])
+        if resultado.get("encontrado"):
+            logger.info(
+                "Unión lista: %d contratos | %d con expediente UISARD | %d sin UISARD",
+                resultado["total"], resultado["con_uisard"], resultado["sin_uisard"],
+            )
+            return resultado["ruta"]
 
-    resultado = unir_consolidados(ruta_base, df_uisard, salidas["verificacion"])
-    if resultado.get("encontrado"):
-        logger.info(
-            "Unión lista: %d contratos | %d con expediente UISARD | %d sin UISARD",
-            resultado["total"], resultado["con_uisard"], resultado["sin_uisard"],
-        )
-        return resultado["ruta"]
-
-    logger.warning("No hay CSV del bloque propio; se verifica el consolidado UISARD directo.")
-    return salidas["csv"]
+    logger.warning(
+        "No hay CSV del bloque propio; el consolidado 02 queda como el consolidado UISARD."
+    )
+    df_uisard.to_csv(salidas["verificacion"], index=False, encoding="utf-8-sig")
+    return salidas["verificacion"]
 
 
 # ----------------------------------------------------------------------
@@ -180,21 +182,21 @@ def fase_unificacion(args, salidas: dict, df_uisard: pd.DataFrame) -> str:
 # ----------------------------------------------------------------------
 def fase_notificacion(args, salidas: dict, ruta_unificado: Optional[str] = None) -> None:
     logger.info("=" * 60)
-    logger.info("FASE 4: Notificación a ordenadores sin registros en UISARD")
+    logger.info("FASE 4: Notificación de expedientes no encontrados en Alfresco")
     logger.info("=" * 60)
 
     if args.no_notificar:
         logger.info("--no-notificar: se omite la notificación.")
         return
 
-    from notificar_uisard import notificar_no_uisard
+    from src.notificar_uisard import notificar_no_uisard
 
     ruta_csv = args.ruta_unificado or ruta_unificado or os.path.join(
         salidas["carpeta"], "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"
     )
-    resumen = notificar_no_uisard(ruta_csv, enviar=args.enviar_correos)
+    resumen = notificar_no_uisard(ruta_csv, enviar=args.enviar_correos, columna_no="alfresco")
     logger.info(
-        "Notificación: %d registros, %d sin UISARD, %d correos generados.",
+        "Notificación: %d registros, %d sin expediente en Alfresco, %d correos generados.",
         resumen["total"], resumen["sin_uisard"], resumen["mensajes"],
     )
 
@@ -234,16 +236,17 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
         descargar_zip=not args.no_zip,
     )
     resultados = extractor.ejecutar_verificacion_csv(ruta_csv)
-    pasos = resultados.get("pasos", [])
     resumen = resultados.get("resumen", [])
     if not resumen:
         logger.error("No se obtuvieron resultados de la verificación Alfresco.")
         sys.exit(1)
 
-    ruta_pasos = os.path.join(salidas["carpeta"], "verificacion_alfresco_pasos.csv")
-    ruta_resumen = os.path.join(salidas["carpeta"], "verificacion_alfresco.csv")
-    pd.DataFrame(pasos).to_csv(ruta_pasos, index=False, encoding="utf-8-sig")
-    pd.DataFrame(resumen).to_csv(ruta_resumen, index=False, encoding="utf-8-sig")
+    ruta_resumen = resultados.get("ruta_resumen") or os.path.join(
+        salidas["carpeta"], "verificacion_alfresco.csv"
+    )
+    ruta_pendientes = resultados.get("ruta_pendientes") or os.path.join(
+        salidas["carpeta"], "verificacion_pendientes.csv"
+    )
 
     encontrados = sum(1 for r in resumen if r.get("MOTIVO") == "")
     total = len(resumen)
@@ -252,22 +255,72 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
         total, encontrados, total - encontrados,
     )
 
-    reintento = resultados.get("reintento", [])
-    if reintento:
-        logger.info(
-            "FASE 1 (búsqueda) no encontró %d expedientes; se escribieron a: %s",
-            len(reintento), resultados.get("ruta_reintento", ""),
-        )
     no_encontrados = resultados.get("pendientes", [])
     if no_encontrados:
         logger.info(
-            "Tras la ruta manual quedan %d pendientes: %s",
-            len(no_encontrados), resultados.get("ruta_pendientes", ""),
+            "Expedientes no encontrados (%d): %s",
+            len(no_encontrados), ruta_pendientes,
         )
-
-    if ruta_pasos:
-        logger.info("Detalle por paso: %s", ruta_pasos)
     logger.info("Resumen: %s", ruta_resumen)
+
+
+def fase_merge_alfresco(args, salidas: dict) -> str:
+    """Une el resultado de la verificación Alfresco al consolidado 02.
+
+    Lee ``verificacion_alfresco.csv`` y agrega al consolidado
+    ``02_conciliacion_UISARD_NUEVAS_VERSIONES.csv`` las columnas ``alfresco``
+    (SI/NO) y ``cantidad_archivos`` (n.º de archivos del ZIP corroborado), uniendo
+    por ``NOMBRE EXPEDIENTE``. Devuelve la ruta del consolidado 02 enriquecido.
+    """
+    logger.info("=" * 60)
+    logger.info("FASE 3.5: Incorporación de resultados Alfresco al consolidado 02")
+    logger.info("=" * 60)
+
+    ruta_verificacion = os.path.join(salidas["carpeta"], "verificacion_alfresco.csv")
+    ruta_consolidado = os.path.join(
+        salidas["carpeta"], "02_conciliacion_UISARD_NUEVAS_VERSIONES.csv"
+    )
+
+    if not os.path.isfile(ruta_verificacion):
+        logger.warning("No existe %s; no se puede enriquecer el consolidado 02.", ruta_verificacion)
+        return ruta_consolidado
+
+    ver = pd.read_csv(ruta_verificacion, encoding="utf-8-sig", dtype=str).fillna("")
+    if "NOMBRE EXPEDIENTE" not in ver.columns or not {"alfresco", "cantidad_archivos"}.issubset(ver.columns):
+        logger.warning(
+            "El resumen Alfresco no tiene las columnas 'NOMBRE EXPEDIENTE'/'alfresco'/'cantidad_archivos'."
+        )
+        return ruta_consolidado
+
+    if not os.path.isfile(ruta_consolidado):
+        logger.warning(
+            "No existe el consolidado %s; se crea a partir del consolidado base (01).",
+            ruta_consolidado,
+        )
+        base = pd.read_csv(salidas["csv"], encoding="utf-8-sig", dtype=str).fillna("")
+        base.to_csv(ruta_consolidado, index=False, encoding="utf-8-sig")
+
+    cons = pd.read_csv(ruta_consolidado, encoding="utf-8-sig", dtype=str).fillna("")
+
+    # Mapa expediente -> resultado de Alfresco.
+    mapa = ver.set_index("NOMBRE EXPEDIENTE")[["alfresco", "cantidad_archivos"]]
+    cons["alfresco"] = cons["NOMBRE EXPEDIENTE"].map(mapa["alfresco"])
+    cons["cantidad_archivos"] = cons["NOMBRE EXPEDIENTE"].map(mapa["cantidad_archivos"])
+
+    tiene_exp = cons["NOMBRE EXPEDIENTE"].astype(str).str.strip() != ""
+    # Con expediente pero sin verificación (no estaba en el reporte) -> NO encontrado.
+    cons.loc[tiene_exp & cons["alfresco"].isna(), "alfresco"] = "NO"
+    # Sin expediente (contrato no registrado en UISARD) -> queda en blanco.
+    cons["alfresco"] = cons["alfresco"].fillna("")
+    cons["cantidad_archivos"] = cons["cantidad_archivos"].fillna("")
+
+    cons.to_csv(ruta_consolidado, index=False, encoding="utf-8-sig")
+    logger.info(
+        "Consolidado 02 enriquecido (%d filas): %s | alfresco=SI: %d",
+        len(cons), ruta_consolidado,
+        int((cons["alfresco"].astype(str).str.upper() == "SI").sum()),
+    )
+    return ruta_consolidado
 
 
 def parsear_argumentos() -> argparse.Namespace:
@@ -368,7 +421,7 @@ def main():
         paso 1: Ingresar a la plataforma de nuevas versiones y descargar el reporte financiero. Descarga en ./01_Contratos_Descargados
         Paso 2: Ejecuta el main de seguimiento_p2 para actualizar la matriz de seguimiento y exportar el CSV normalizado. guarda en ./02_Matriz_actualizada y ./03_Contratos_Conciliacion
         """
-        #ejecutar_bloque_propio(args)
+        ejecutar_bloque_propio(args)
 
 
 
@@ -386,8 +439,8 @@ def main():
         df = fase_conciliacion(args, salidas)
         logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
         #paso 3: concatena los 3 tipos de contratos extraídos de alfresco y los guarda en un archivo csv
-        csv_verificacion = fase_unificacion(args, salidas, df)
-
+        fase_unificacion(args, salidas, df)
+        return
 
         #Modulo 3 ---------------------------------------------------------------------------------------
         """"
@@ -395,8 +448,11 @@ def main():
         paso 1: Entrar y autenticarse en la plataforma de Alfresco y verificar los contratos que se encuentran en el archivo csv generado en el paso anterior.
         paso 2: notificar a los ordenadores
         """
-        fase_alfresco(args, salidas, csv_verificacion)
-        fase_notificacion(args, salidas, csv_verificacion)
+        # La verificación de Alfresco se hace únicamente sobre el consolidado UISARD (01_...).
+        fase_alfresco(args, salidas)
+        # Se incorpora el resultado al consolidado 02 (alfresco + cantidad_archivos).
+        fase_merge_alfresco(args, salidas)
+        fase_notificacion(args, salidas)
         logger.info("Proceso completo: bloque propio y bloque UISARD/Alfresco finalizados.")
 
     except KeyboardInterrupt:
