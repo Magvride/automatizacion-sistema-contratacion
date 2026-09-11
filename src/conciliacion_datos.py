@@ -30,6 +30,35 @@ RUTA_SALIDA = str(RESULTADOS_DIR / "01_Contratos_en_UISARD.csv")
 
 COLUMNAS_DESEADAS = ["NOMBRE EXPEDIENTE", "NÚMERO CONTRATO", "UAA", "SERIE", "SUBSERIE"]
 
+# UISARD cambió los encabezados del reporte de expedientes. La aplicación debe
+# conservar un esquema interno estable, independientemente de la versión del
+# Excel que se descargue.
+ALIAS_COLUMNAS = {
+    "NOMBRE EXPEDIENTE": (
+        "NOMBRE EXPEDIENTE",
+        "NOMBRE DEL EXPEDIENTE",
+        "NOMBRE",
+        "EXPEDIENTE",
+    ),
+    "NÚMERO CONTRATO": (
+        "NÚMERO CONTRATO",
+        "NUMERO CONTRATO",
+        "NOMBRE CONTRATO",
+        "CONTRATO",
+    ),
+    "UAA": (
+        "UAA",
+        "CÓDIGO UAA",
+        "CODIGO UAA",
+        "UNIDAD ACADÉMICO-ADMINISTRATIVA",
+        "UNIDAD ACADEMICO-ADMINISTRATIVA",
+        "UNIDAD ACADÉMICO ADMINISTRATIVA",
+        "UNIDAD ACADEMICO ADMINISTRATIVA",
+    ),
+    "SERIE": ("SERIE",),
+    "SUBSERIE": ("SUBSERIE", "SUB-SERIE", "SUB SERIE"),
+}
+
 # Archivos que no son reportes por serie (consolidados intermedios, bloqueados, etc.)
 ARCHIVOS_EXCLUIDOS = ("consolidado", "~", ".~lock")
 
@@ -59,6 +88,18 @@ def texto_libre(valor):
     return str(valor)
 
 
+def _indices_columnas(encabezados):
+    """Relaciona encabezados del reporte con las columnas internas."""
+    disponibles = {}
+    for indice, encabezado in enumerate(encabezados):
+        nombre = normalizar(encabezado)
+        for deseada in COLUMNAS_DESEADAS:
+            if nombre in {normalizar(alias) for alias in ALIAS_COLUMNAS[deseada]}:
+                disponibles[deseada] = indice
+                break
+    return disponibles
+
+
 def leer_reporte(ruta):
     """Lee un reporte (xlsx/xls/csv) y devuelve un DataFrame con COLUMNAS_DESEADAS."""
     extension = os.path.splitext(ruta)[1].lower()
@@ -67,7 +108,11 @@ def leer_reporte(ruta):
         columnas = {normalizar(c): c for c in df.columns}
         resultado = pd.DataFrame()
         for deseada in COLUMNAS_DESEADAS:
-            origen = columnas.get(normalizar(deseada))
+            origen = next(
+                (columnas.get(normalizar(alias)) for alias in ALIAS_COLUMNAS[deseada]
+                 if normalizar(alias) in columnas),
+                None,
+            )
             resultado[deseada] = df[origen] if origen else ""
         return resultado
 
@@ -80,7 +125,7 @@ def leer_reporte(ruta):
 
     fila_encabezado = None
     for indice, fila in enumerate(matriz):
-        if any("NOMBRE EXPEDIENTE" in normalizar(c) for c in fila):
+        if _indices_columnas(fila):
             fila_encabezado = indice
             break
     if fila_encabezado is None:
@@ -88,12 +133,7 @@ def leer_reporte(ruta):
         return pd.DataFrame()
 
     encabezados = matriz[fila_encabezado]
-    indices = {}
-    for idx, celda in enumerate(encabezados):
-        for deseada in COLUMNAS_DESEADAS:
-            if normalizar(celda) == normalizar(deseada):
-                indices[deseada] = idx
-                break
+    indices = _indices_columnas(encabezados)
 
     filas = []
     for fila in matriz[fila_encabezado + 1:]:

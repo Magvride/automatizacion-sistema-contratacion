@@ -19,4 +19,7 @@ __pycache__/
 # Artefactos de PyInstaller
 build/
 dist/
+installer_output/
+.build-venv/
 *.spec
+!app.spec
