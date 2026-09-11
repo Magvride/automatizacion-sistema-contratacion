@@ -24,8 +24,11 @@ hiddenimports = [
     "src",
 ]
 
-# PyQt6 and Playwright contain dynamically discovered modules and support data.
-for package in ("PyQt6", "playwright", "playwright_stealth"):
+# PyQt6, Selenium and Playwright contain dynamically discovered modules and
+# support data. Selenium's Chrome implementation imports its concrete driver
+# module dynamically, so collecting the whole package avoids runtime failures
+# such as ``No module named selenium.webdriver.chrome.webdriver``.
+for package in ("PyQt6", "selenium", "playwright", "playwright_stealth"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas.extend(package_datas)
     binaries.extend(package_binaries)
