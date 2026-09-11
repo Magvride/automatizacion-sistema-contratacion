@@ -1,15 +1,14 @@
 ; Script de Inno Setup para el Sistema Automatizado de Contrataciones.
-; Genera un instalador por usuario (sin permisos de administrador) que no
-; requiere dependencias externas: todo el runtime viaja en dist\.
+; El runtime Python, las dependencias y Chromium de Playwright viajan en dist\.
 ;
 ; Compilar:
-;   1) pyinstaller app.spec --noconfirm
+;   1) powershell -ExecutionPolicy Bypass -File build_gui.ps1
 ;   2) "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ;
 ; Resultado: installer_output\Setup_ContratacionesETL_0.4.0.exe
 
 #define MyAppName "Sistema Automatizado de Contrataciones"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "Universidad Industrial de Santander"
 #define MyAppExeName "SistemaContrataciones.exe"
 
