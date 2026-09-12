@@ -26,7 +26,7 @@ from desktop.core.pipeline import ETAPAS
 from desktop.core.worker import OneDriveWorker, PipelineWorker
 from desktop.paths import BASE_DIR, icono_app
 from desktop.widgets.dashboard_page import DashboardPage
-from desktop.widgets.pages import ConfigPage, HistoryPage, SourcesPage
+from desktop.widgets.pages import ConfigPage, SourcesPage
 from desktop.widgets.results_page import ResultsPage
 from desktop.widgets.sidebar import Sidebar
 from desktop.widgets.status_bar import StatusBar
@@ -103,14 +103,12 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardPage()
         self.pagina_resultados = ResultsPage()
         self.pagina_fuentes = SourcesPage()
-        self.pagina_historial = HistoryPage()
         self.pagina_config = ConfigPage()
         self.pagina_config.actualizado.connect(lambda msg: self._on_log("INFO", msg))
         for pagina in (
             self.dashboard,
             self.pagina_resultados,
             self.pagina_fuentes,
-            self.pagina_historial,
             self.pagina_config,
         ):
             pagina.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -142,6 +140,7 @@ class MainWindow(QMainWindow):
         barra.btn_onedrive.clicked.connect(self._subir_onedrive)
         self.dashboard.activity_log.descargar.connect(self._descargar_log)
         self.dashboard.documents_card.cambio.connect(self._actualizar_estado_entradas)
+        self.dashboard.action_bar.chk_demo.toggled.connect(self._actualizar_estado_entradas)
         self._actualizar_estado_entradas()
 
     # ------------------------------------------------------------------
@@ -152,8 +151,6 @@ class MainWindow(QMainWindow):
         if indice == 1:
             self.pagina_resultados.refrescar()
         elif indice == 3:
-            self.pagina_historial.refrescar()
-        elif indice == 4:
             self.pagina_config.refrescar()
 
     # ------------------------------------------------------------------
@@ -185,6 +182,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _faltantes(self) -> list:
         """Nombres de los documentos que aún no están seleccionados o no existen."""
+        if self.dashboard.action_bar.en_demo():
+            return []
         seleccion = self.dashboard.documents_card.rutas()
         faltantes = []
         for documento in documentos():
@@ -202,9 +201,13 @@ class MainWindow(QMainWindow):
 
     def _actualizar_estado_entradas(self) -> None:
         self.dashboard.documents_card.refrescar_matriz()
-        faltantes = self._faltantes()
         if self.worker is not None and self.worker.isRunning():
             return
+        if self.dashboard.action_bar.en_demo():
+            self.dashboard.status_chip.set_estado("pending")
+            self.dashboard.status_chip.set_texto("Modo demo activo")
+            return
+        faltantes = self._faltantes()
         if not faltantes:
             self.dashboard.status_chip.set_estado("pending")
             self.dashboard.status_chip.set_texto("Listo para iniciar")
@@ -239,7 +242,10 @@ class MainWindow(QMainWindow):
 
         self._on_log("INFO", "Proceso iniciado con los documentos cargados.")
 
-        self.worker = PipelineWorker(self.dashboard.documents_card.rutas())
+        self.worker = PipelineWorker(
+            self.dashboard.documents_card.rutas(),
+            demo=self.dashboard.action_bar.en_demo(),
+        )
         self.worker.etapa_actualizada.connect(self._on_etapa)
         self.worker.progreso_global.connect(self._on_progreso)
         self.worker.pausa_requerida.connect(self._on_pausa)

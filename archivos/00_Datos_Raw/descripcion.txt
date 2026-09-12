@@ -1,0 +1,39 @@
+CARPETA DE DATOS DE ENTRADA (manual)
+====================================
+
+Coloca aquí los archivos que el flujo necesita antes de ejecutar.
+Estos datos NO se versionan en git; esta nota sí.
+
+Archivos requeridos
+-------------------
+1. Matriz Seguimiento Contractual UIS.xlsx
+   Matriz de seguimiento del bloque propio (Financiero UIS).
+
+2. Diccionario de documentos (uno de estos nombres):
+     - Diccionario_Documentos.xlsx
+     - Matriz_Documentos_por_Clase*.xlsx
+   Define, por tipo de contrato y por etapa, qué documentos son obligatorios
+   y sus alias. El cargador acepta las hojas:
+     - Catálogo: "CATALOGO_PLANO" (o "Diccionario") con columnas
+       ID_DOC | CLASE | CODIGO_CLASE | DOCUMENTO | CODIGO_FORMATO |
+       ETAPA | CARDINALIDAD | OBLIGATORIEDAD | ALIAS
+     - Etapas:   "MATRIZ" (o "Matriz_Etapas")
+     - Correos:  "CORREOS" (plantillas con campos {{CONTRATO}}, {{SUPERVISOR}},
+       {{LISTADO_FALTANTES}}, {{PORCENTAJE}}, {{ENLACE_CARPETA}}, ...). Se usan
+       para generar los borradores 10_Correos_Auditoria.txt.
+   Solo se exigen las filas con OBLIGATORIEDAD = "Obligatorio" (las
+   "Condicional" no cuentan como faltante).
+   Sin este archivo, la etapa de Alfresco aborta con un mensaje claro.
+
+3. Ordenadores_*.xlsx  (opcional)
+   Mapa "ORDENADORES DE GASTO" -> "CORREO" para notificar a los ordenadores.
+
+Cómo se usa el diccionario
+--------------------------
+- El flujo autodetecta el archivo en esta carpeta.
+- También se puede indicar otra ruta:
+      python main.py --ruta-diccionario "C:\ruta\Matriz_Documentos_por_Clase.xlsx"
+- Desde la GUI (python -m desktop) se selecciona como "Diccionario de documentos".
+
+La ruta de esta carpeta se puede configurar en la GUI (Configuración) y queda
+guardada en config_rutas.json.
