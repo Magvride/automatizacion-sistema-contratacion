@@ -1,0 +1,61 @@
+name: Publicar instalador
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Instalar Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress --yes
+
+      - name: Validar versión del tag
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $source = Get-Content .\desktop\__init__.py -Raw
+          if ($source -notmatch '__version__\s*=\s*["'']([^"'']+)["'']') {
+            throw "No se encontró la versión de la aplicación."
+          }
+          $sourceVersion = $Matches[1]
+          $tagVersion = $env:RELEASE_TAG.TrimStart('v', 'V')
+          if ($sourceVersion -ne $tagVersion) {
+            throw "El tag $env:RELEASE_TAG no coincide con la versión $sourceVersion."
+          }
+
+      - name: Compilar aplicación e instalador
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\build_gui.ps1
+
+      - name: Generar SHA-256
+        shell: powershell
+        run: |
+          $installer = Get-ChildItem .\installer_output\*.exe | Select-Object -First 1
+          if (-not $installer) { throw "No se encontró el instalador generado." }
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($installer.Name)" | Set-Content -LiteralPath .\installer_output\checksums.txt -Encoding ascii
+
+      - name: Publicar GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            installer_output/*.exe
+            installer_output/checksums.txt

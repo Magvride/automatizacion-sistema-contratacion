@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from desktop import icons, theme
+from desktop import __version__
 
 ITEMS = (
     ("Panel de ejecución", icons.PANEL),
@@ -67,7 +68,7 @@ class Sidebar(QFrame):
 
         # --- Pie ---
         pie = QLabel(
-            "<b>v0.4 · MVP</b><br>Extracción manual de reportes.<br>"
+            f"<b>v{__version__}</b><br>Extracción manual de reportes.<br>"
             "Conciliación, verificación y notificación automatizadas."
         )
         pie.setObjectName("NavFooter")

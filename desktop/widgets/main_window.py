@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QScrollArea,
     QSizeGrip,
     QStackedWidget,
@@ -25,6 +26,8 @@ from desktop.core.logging_bridge import LogBridge, instalar_handler
 from desktop.core.pipeline import ETAPAS
 from desktop.core.worker import OneDriveWorker, PipelineWorker
 from desktop.paths import BASE_DIR, icono_app
+from desktop.updater_client import UpdateCheckWorker, launch_update
+from desktop import __version__
 from desktop.widgets.dashboard_page import DashboardPage
 from desktop.widgets.pages import ConfigPage, HistoryPage, SourcesPage
 from desktop.widgets.results_page import ResultsPage
@@ -61,6 +64,7 @@ class MainWindow(QMainWindow):
         self._inicio_global = 0.0
         self._inicio_etapa = 0.0
         self._etapa_activa: str | None = None
+        self._update_worker: UpdateCheckWorker | None = None
 
         self.bridge = LogBridge()
         self.bridge.registro.connect(self._on_log)
@@ -88,6 +92,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         self.title_bar = TitleBar(self)
+        self.title_bar.actualizarSolicitado.connect(self._buscar_actualizaciones)
         layout.addWidget(self.title_bar)
 
         cuerpo = QWidget()
@@ -162,6 +167,64 @@ class MainWindow(QMainWindow):
     def _on_log(self, nivel: str, mensaje: str) -> None:
         self._historial.append((datetime.now().strftime("%H:%M:%S"), nivel, mensaje))
         self.dashboard.activity_log.agregar(nivel, mensaje)
+
+    # ------------------------------------------------------------------
+    # Actualizaciones
+    # ------------------------------------------------------------------
+    def _buscar_actualizaciones(self) -> None:
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        self.title_bar.btn_actualizar.setEnabled(False)
+        self._on_log("INFO", f"Buscando actualizaciones (versión {__version__})...")
+        self._update_worker = UpdateCheckWorker(self)
+        self._update_worker.resultado.connect(self._on_actualizacion_consultada)
+        self._update_worker.finished.connect(self._actualizacion_terminada)
+        self._update_worker.start()
+
+    def _on_actualizacion_consultada(self, resultado: object) -> None:
+        datos = resultado if isinstance(resultado, dict) else {}
+        if not datos.get("ok"):
+            mensaje = str(datos.get("error", "No se pudo consultar GitHub."))
+            self._on_log("ERROR", f"No se pudo buscar actualizaciones: {mensaje}")
+            QMessageBox.warning(self, "Actualizaciones", mensaje)
+            return
+
+        update = datos.get("data", {})
+        if not update.get("available"):
+            self._on_log("INFO", "La aplicación ya está actualizada.")
+            QMessageBox.information(
+                self,
+                "Actualizaciones",
+                f"Ya tienes la versión {__version__} instalada.",
+            )
+            return
+
+        version = update["version"]
+        respuesta = QMessageBox.question(
+            self,
+            "Nueva versión disponible",
+            f"Está disponible la versión {version}.\n\n"
+            "La aplicación se cerrará, instalará la actualización y se abrirá de nuevo.\n\n"
+            "¿Deseas actualizar ahora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            self._on_log("INFO", "Actualización cancelada por el usuario.")
+            return
+
+        try:
+            launch_update(update)
+        except (OSError, RuntimeError) as exc:
+            self._on_log("ERROR", f"No se pudo iniciar la actualización: {exc}")
+            QMessageBox.critical(self, "Actualizaciones", str(exc))
+            return
+        self._on_log("INFO", f"Actualización a {version} iniciada.")
+        self.close()
+
+    def _actualizacion_terminada(self) -> None:
+        self.title_bar.btn_actualizar.setEnabled(True)
+        self._update_worker = None
 
     def _actualizar_destino(self) -> None:
         try:

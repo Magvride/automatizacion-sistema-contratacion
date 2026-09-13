@@ -9,6 +9,7 @@ $playwright = Join-Path $venv "Scripts\playwright.exe"
 $browserPath = Join-Path $root "build\playwright_browsers"
 $distPath = Join-Path $root "dist"
 $workPath = Join-Path $root "build\pyinstaller"
+$updaterWorkPath = Join-Path $workPath "updater"
 $isccCandidates = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
@@ -40,6 +41,14 @@ Write-Host "[4/5] Empaquetando la GUI con PyInstaller..."
 & $python (Join-Path $root "desktop\assets\generar_icono.py")
 & $python -m PyInstaller (Join-Path $root "app.spec") --noconfirm --clean --distpath $distPath --workpath $workPath
 
+$updaterOutput = Join-Path $distPath "SistemaContrataciones\updater.exe"
+Write-Host "[4/5] Empaquetando el actualizador externo..."
+New-Item -ItemType Directory -Path $updaterWorkPath -Force | Out-Null
+& $python -m PyInstaller (Join-Path $root "desktop\updater.py") --noconfirm --clean --onefile --noconsole --name updater --distpath (Join-Path $distPath "SistemaContrataciones") --workpath $updaterWorkPath --specpath $updaterWorkPath
+if (-not (Test-Path -LiteralPath $updaterOutput)) {
+    throw "PyInstaller no generó el actualizador esperado: $updaterOutput"
+}
+
 $exe = Join-Path $distPath "SistemaContrataciones\SistemaContrataciones.exe"
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "PyInstaller no generó el ejecutable esperado: $exe"
@@ -61,5 +70,10 @@ if (-not $iscc) {
 }
 
 Write-Host "[5/5] Generando instalador .exe..."
-& $iscc (Join-Path $root "installer.iss")
+$versionText = Get-Content -LiteralPath (Join-Path $root "desktop\__init__.py") -Raw
+if ($versionText -notmatch '__version__\s*=\s*["'']([^"'']+)["'']') {
+    throw "No se pudo obtener la versión desde desktop\__init__.py"
+}
+$appVersion = $Matches[1]
+& $iscc "/DMyAppVersion=$appVersion" (Join-Path $root "installer.iss")
 Write-Host "Instalador generado en installer_output\"

@@ -90,6 +90,24 @@ def hoja_estilos() -> str:
     #WinButton:hover {{
         background: rgba(255, 255, 255, 0.30);
     }}
+    #UpdateButton {{
+        background: rgba(255, 255, 255, 0.16);
+        border: none;
+        border-radius: 6px;
+        color: #DCEAE7;
+        font-size: 12px;
+        min-width: 166px;
+        max-width: 166px;
+        min-height: 26px;
+        max-height: 26px;
+        padding: 0 8px;
+    }}
+    #UpdateButton:hover {{
+        background: rgba(255, 255, 255, 0.30);
+    }}
+    #UpdateButton:disabled {{
+        color: #A9C5C0;
+    }}
     #WinClose {{
         background: rgba(255, 255, 255, 0.16);
         border: none;
@@ -414,6 +432,14 @@ def hoja_estilos() -> str:
         background: {PANEL};
         border-top: 1px solid {LINE};
     }}
+    #LogBody QWidget {{
+        background: {PANEL};
+        color: {INK};
+    }}
+    #LogEntry {{
+        background: {PANEL};
+        color: {INK};
+    }}
     #LogEntryTime {{
         font-family: "{FUENTE_MONO}";
         color: {INK_FAINT};
@@ -431,6 +457,35 @@ def hoja_estilos() -> str:
         background: #F0F2F4;
         max-height: 1px;
         min-height: 1px;
+    }}
+
+    /* ---------------- Diálogos del sistema ---------------- */
+    QDialog {{
+        background: {PANEL};
+        color: {INK};
+    }}
+    QMessageBox {{
+        background: {PANEL};
+        color: {INK};
+    }}
+    QMessageBox QLabel {{
+        background: transparent;
+        color: {INK};
+    }}
+    QMessageBox QPushButton {{
+        background: {ACCENT};
+        color: #FFFFFF;
+        border: 1px solid {ACCENT_DARK};
+        border-radius: 6px;
+        min-width: 76px;
+        min-height: 28px;
+        padding: 4px 12px;
+    }}
+    QMessageBox QPushButton:hover {{
+        background: {ACCENT_DARK};
+    }}
+    QDialog QLabel, QDialog QCheckBox, QDialog QRadioButton {{
+        color: {INK};
     }}
 
     /* ---------------- Barra de estado ---------------- */

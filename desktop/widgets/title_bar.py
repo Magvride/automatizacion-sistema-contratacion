@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Barra de título personalizada con controles de ventana y arrastre."""
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -15,6 +15,8 @@ from desktop import icons, theme
 
 class TitleBar(QFrame):
     """Cabecera verde de la ventana (ventana sin marco nativo)."""
+
+    actualizarSolicitado = pyqtSignal()
 
     def __init__(self, ventana: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -35,6 +37,14 @@ class TitleBar(QFrame):
         layout.addWidget(icono)
         layout.addWidget(titulo)
         layout.addStretch(1)
+
+        self.btn_actualizar = QPushButton("Buscar actualizaciones")
+        self.btn_actualizar.setObjectName("UpdateButton")
+        self.btn_actualizar.setToolTip("Buscar actualizaciones")
+        self.btn_actualizar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_actualizar.setFlat(True)
+        self.btn_actualizar.clicked.connect(self.actualizarSolicitado)
+        layout.addWidget(self.btn_actualizar)
 
         self.btn_minimizar = self._boton(icons.MINIMIZE, "Minimizar", self._minimizar)
         self.btn_maximizar = self._boton(icons.MAXIMIZE, "Maximizar", self._alternar_max)

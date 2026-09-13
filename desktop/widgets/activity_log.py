@@ -135,6 +135,7 @@ class ActivityLog(Card):
         hora = datetime.now().strftime("%H:%M:%S")
 
         entrada = QFrame()
+        entrada.setObjectName("LogEntry")
         fila = QHBoxLayout(entrada)
         fila.setContentsMargins(18, 10, 18, 10)
         fila.setSpacing(10)
