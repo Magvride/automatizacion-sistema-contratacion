@@ -59,15 +59,29 @@ def _normalizar(df) -> pd.DataFrame:
 
 
 def _estado(uisard, alfresco) -> str:
-    """Resumen legible de la situación de un contrato."""
-    if str(uisard).strip().upper() != "SI":
-        return "NO ESTA EN UISARD"
-    estado_alf = str(alfresco).strip().upper()
-    if estado_alf == "SI":
-        return "EN UISARD - CON ARCHIVOS"
-    if estado_alf == "NO":
-        return "EN UISARD - SIN ARCHIVOS"
-    return "EN UISARD - PENDIENTE"
+    """Resumen legible de la situación de un contrato.
+
+    Compatible con el flujo legado (con UISARD) y con el flujo nuevo (solo
+    nuevas versiones, sin UISARD): si ``uisard`` trae SI/NO se usa el estado
+    clásico; si viene vacío se reporta el estado centrado en Alfresco.
+    """
+    u = str(uisard).strip().upper()
+    a = str(alfresco).strip().upper()
+
+    if u in ("SI", "NO"):
+        if u != "SI":
+            return "NO ESTA EN UISARD"
+        if a == "SI":
+            return "EN UISARD - CON ARCHIVOS"
+        if a == "NO":
+            return "EN UISARD - SIN ARCHIVOS"
+        return "EN UISARD - PENDIENTE"
+
+    if a == "SI":
+        return "EN ALFRESCO - CON ARCHIVOS"
+    if a == "NO":
+        return "EN ALFRESCO - SIN ARCHIVOS"
+    return "PENDIENTE"
 
 
 def construir_resultados(consolidado, verificacion=None) -> pd.DataFrame:

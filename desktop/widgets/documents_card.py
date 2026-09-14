@@ -119,7 +119,7 @@ class _FilaDocumento(QWidget):
 
 
 class DocumentsCard(Card):
-    """Selección de los 4 Excel y de la matriz de seguimiento."""
+    """Selección de los archivos de entrada y de la matriz de seguimiento."""
 
     cambio = pyqtSignal()
 
@@ -129,7 +129,9 @@ class DocumentsCard(Card):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(CardHead("Documentos de entrada", "4 archivos Excel"))
+        layout.addWidget(
+            CardHead("Documentos de entrada", f"{len(documentos())} archivos Excel")
+        )
 
         cuerpo = QWidget()
         cuerpo_layout = QVBoxLayout(cuerpo)

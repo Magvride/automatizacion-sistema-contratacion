@@ -28,6 +28,9 @@ MATRIZ_MANUAL_DIR = ARCHIVOS_DIR / "00_Datos_Raw"
 MATRIZ_ACTUALIZADA_DIR = ARCHIVOS_DIR / "02_Matriz_actualizada"
 EXTRACCION_DIR = ARCHIVOS_DIR / "03_Contratos_Conciliacion"
 RESULTADOS_DIR = ARCHIVOS_DIR / "05_Datos_filtrados"
+# Carpeta de trabajo interno: consolidados, verificaciones y borradores que NO
+# son entregables para el cliente (solo se entregan 09 y 11).
+INTERNO_DIR = ARCHIVOS_DIR / "_interno"
 EXHIBITOS_DIR = ARCHIVOS_DIR / "06_Expedientes"
 EXHIBITOS_VERIFICADOS_DIR = EXHIBITOS_DIR / "expedientes_verificados"
 STORAGE_STATE_PATH = ARCHIVOS_DIR / "sesion" / "uis_storage_state.json"
@@ -182,6 +185,7 @@ def preparar_directorios() -> None:
         MATRIZ_ACTUALIZADA_DIR,
         EXTRACCION_DIR,
         RESULTADOS_DIR,
+        INTERNO_DIR,
         EXHIBITOS_DIR,
         EXHIBITOS_VERIFICADOS_DIR,
         STORAGE_STATE_PATH.parent,

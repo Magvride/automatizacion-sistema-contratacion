@@ -32,9 +32,10 @@ class PipelineWorker(QThread):
     pausa_requerida = pyqtSignal(str)
     finalizado = pyqtSignal(bool, str)
 
-    def __init__(self, documentos: dict, parent=None) -> None:
+    def __init__(self, documentos: dict, parent=None, demo: bool = False) -> None:
         super().__init__(parent)
         self.documentos = documentos
+        self.demo = demo
         self._evento_input = threading.Event()
         self._texto_input = ""
         self._lock = threading.Lock()
@@ -71,6 +72,7 @@ class PipelineWorker(QThread):
             on_etapa=lambda *args: self.etapa_actualizada.emit(*args),
             on_progreso=lambda *args: self.progreso_global.emit(*args),
             cancelado=self.isInterruptionRequested,
+            demo=self.demo,
         )
         try:
             pipeline.ejecutar()
@@ -78,7 +80,7 @@ class PipelineWorker(QThread):
             logger.warning("Proceso detenido por el usuario.")
             self.finalizado.emit(False, "Proceso detenido por el usuario.")
         except Exception as exc:  # noqa: BLE001
-            logger.error("El proceso terminó con error: %s", exc)
+            logger.error("El proceso terminó con error: %s", exc, exc_info=True)
             self.finalizado.emit(False, str(exc))
         else:
             self.finalizado.emit(True, "Proceso finalizado correctamente.")

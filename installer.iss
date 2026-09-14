@@ -1,5 +1,6 @@
 ; Script de Inno Setup para el Sistema Automatizado de Contrataciones.
-; El runtime Python, las dependencias y Chromium de Playwright viajan en dist\.
+; El runtime Python y las dependencias viajan en dist\. Ya no se empaqueta
+; Chromium de Playwright (la verificación de Alfresco es por API REST).
 ;
 ; Compilar:
 ;   1) powershell -ExecutionPolicy Bypass -File build_gui.ps1
@@ -9,7 +10,7 @@
 
 #define MyAppName "Sistema Automatizado de Contrataciones"
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.6.0"
 #endif
 #define MyAppPublisher "Universidad Industrial de Santander"
 #define MyAppExeName "SistemaContrataciones.exe"
