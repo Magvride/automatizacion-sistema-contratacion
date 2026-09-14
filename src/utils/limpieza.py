@@ -9,6 +9,7 @@ y se eliminan los más antiguos. Esto evita que las carpetas del proyecto
 
 import glob
 import os
+import shutil
 import sys
 import time
 from datetime import datetime, date
@@ -19,9 +20,12 @@ if not getattr(sys, "frozen", False):
         sys.path.insert(0, _SRC_DIR)
 
 from utils.logger import configurar_logger
-from config import REPORTES_DIR, RESULTADOS_DIR
+from config import INTERNO_DIR, REPORTES_DIR, RESULTADOS_DIR
 
 logger = configurar_logger("limpieza")
+
+# Entregables que se conservan en la carpeta de resultados.
+ENTREGABLES = {"Auditoria_Contratos.xlsx", "Informe_Auditoria_Contrato.html"}
 
 # (carpeta_relativa, patrón_glob, mantener, descripción)
 REGLAS = [
@@ -103,6 +107,42 @@ def limpiar(base_dir: str, serie: str = None) -> dict:
     total = sum(resumen.values())
     logger.info("Limpieza finalizada: %d archivos purgados (%s).", total, ", ".join(f"{k}={v}" for k, v in resumen.items()))
     return resumen
+
+
+def limpiar_salidas(base_dir: str = None) -> dict:
+    """Deja limpia la entrega: vacía ``_interno`` y conserva solo los entregables.
+
+    Se llama al finalizar cada ejecución para que no se acumulen archivos de
+    sesiones pasadas. En ``archivos/05_Datos_filtrados`` solo se conservan
+    ``Auditoria_Contratos.xlsx`` e ``Informe_Auditoria_Contrato.html``.
+    """
+    eliminados = 0
+
+    if INTERNO_DIR.is_dir():
+        for ruta in INTERNO_DIR.iterdir():
+            if ruta.name == ".gitkeep":
+                continue
+            try:
+                if ruta.is_dir():
+                    shutil.rmtree(ruta)
+                else:
+                    ruta.unlink()
+                eliminados += 1
+            except OSError as exc:
+                logger.warning("No se pudo eliminar %s: %s", ruta, exc)
+
+    if RESULTADOS_DIR.is_dir():
+        for ruta in RESULTADOS_DIR.iterdir():
+            if not ruta.is_file() or ruta.name in ENTREGABLES or ruta.name == ".gitkeep":
+                continue
+            try:
+                ruta.unlink()
+                eliminados += 1
+            except OSError as exc:
+                logger.warning("No se pudo eliminar %s: %s", ruta, exc)
+
+    logger.info("Salidas limpiadas: %d archivos eliminados.", eliminados)
+    return {"eliminados": eliminados}
 
 
 if __name__ == "__main__":

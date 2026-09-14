@@ -23,11 +23,9 @@ from src.utils.logger import configurar_logger
 
 logger = configurar_logger("main")
 
-from src.uisard_extractor import UISARDExtractor
 from src.conciliacion_datos import generar_consolidado
-from src.alfresco_extractor import AlfrescoExtractor
-from src.utils.limpieza import limpiar
-from src.config import REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
+from src.utils.limpieza import limpiar, limpiar_salidas
+from src.config import INTERNO_DIR, MATRIZ_MANUAL_DIR, REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
 
 if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
@@ -45,16 +43,27 @@ def getenv(clave: str, requerido: bool = False) -> str:
 
 
 def construir_salidas(base_dir: str) -> dict:
+    """Rutas de trabajo. Al cliente solo se le entregan ``09`` y ``11``.
+
+    El resto (consolidado, verificación, resultados y borradores) se guarda en
+    ``archivos/_interno`` para no ensuciar la carpeta de resultados.
+    """
     carpeta = str(RESULTADOS_DIR)
+    interno = str(INTERNO_DIR)
     preparar_directorios()
     return {
         "carpeta": carpeta,
+        "interno": interno,
         "reportes": str(REPORTES_DIR),
-        "csv": os.path.join(carpeta, "01_Contratos_en_UISARD.csv"),
-        "verificacion": os.path.join(carpeta, "02_Consolidado_General.csv"),
-        "resultados": os.path.join(carpeta, "03_Resultado_Final.xlsx"),
-        "dashboard": os.path.join(carpeta, "04_Tablero_Resumen.html"),
-        "dashboard_vivo": os.path.join(carpeta, "05_Tablero_en_Vivo.html"),
+        "csv": os.path.join(interno, "01_Contratos_en_UISARD.csv"),
+        "verificacion": os.path.join(interno, "02_Consolidado_General.csv"),
+        "resultados": os.path.join(interno, "03_Resultado_Final.xlsx"),
+        "dashboard": os.path.join(interno, "04_Tablero_Resumen.html"),
+        "dashboard_vivo": os.path.join(interno, "05_Tablero_en_Vivo.html"),
+        "faltantes": os.path.join(interno, "07_Expedientes_Faltantes.csv"),
+        "auditoria": os.path.join(carpeta, "Auditoria_Contratos.xlsx"),
+        "correos_auditoria": os.path.join(interno, "10_Correos_Auditoria.txt"),
+        "informe": os.path.join(carpeta, "Informe_Auditoria_Contrato.html"),
     }
 
 
@@ -104,6 +113,8 @@ def fase_uisard(args) -> None:
     if args.skip_uisard:
         logger.info("--skip-uisard: se omite la extracción.")
         return
+
+    from src.uisard_extractor import UISARDExtractor
 
     extractor = UISARDExtractor(
         url=getenv("UISARD_URL", True),
@@ -231,6 +242,8 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
         logger.error("Falta la contraseña de Alfresco (define ALFRESCO_SHARE_PASS o ALFRESCO_PASS en .env).")
         sys.exit(1)
 
+    from src.alfresco_extractor import AlfrescoExtractor
+
     extractor = AlfrescoExtractor(
         url=alf_url,
         usuario=alf_user,
@@ -272,6 +285,202 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
             len(no_encontrados), ruta_pendientes,
         )
     logger.info("Resumen: %s", ruta_resumen)
+
+
+# ----------------------------------------------------------------------
+#  FASE 2 (MCP) — Consolidación sin UISARD
+# ----------------------------------------------------------------------
+def fase_consolidacion_mcp(args, salidas: dict) -> pd.DataFrame:
+    """Construye el consolidado 02 solo con las nuevas versiones (sin UISARD)."""
+    logger.info("=" * 60)
+    logger.info("FASE 2 (MCP): Consolidación de nuevas versiones (sin UISARD)")
+    logger.info("=" * 60)
+
+    from src.consolidar import buscar_csv_normalizados, construir_consolidado
+
+    ruta_base = buscar_csv_normalizados()
+    if not ruta_base:
+        logger.error(
+            "No hay CSV del bloque propio (contratos_normalizados*.csv). "
+            "Ejecute primero la actualización de la matriz."
+        )
+        sys.exit(1)
+
+    resultado = construir_consolidado(ruta_base, salidas["verificacion"])
+    if not resultado.get("encontrado"):
+        logger.error("No se pudo construir el consolidado 02 desde %s.", ruta_base)
+        sys.exit(1)
+
+    df = pd.read_csv(salidas["verificacion"], encoding="utf-8-sig", dtype=str).fillna("")
+    logger.info("Consolidado 02 listo (%d filas): %s", len(df), salidas["verificacion"])
+    return df
+
+
+# ----------------------------------------------------------------------
+#  FASE 3 (MCP) — Verificación en Alfresco + auditoría documental
+# ----------------------------------------------------------------------
+def _consolidado_enriquecido(cons: pd.DataFrame, resultados: list) -> pd.DataFrame:
+    """Copia el consolidado 02 y rellena nombre/alfresco/archivos por contrato.
+
+    Sin UISARD, el nombre del expediente solo se conoce tras consultar Alfresco,
+    así que esta función reemplaza el antiguo cruce por ``NOMBRE EXPEDIENTE``.
+    """
+    cons = cons.copy()
+    mapa = {str(r.get("contrato", "")).strip(): r for r in resultados}
+    for idx, fila in cons.iterrows():
+        resultado = mapa.get(str(fila.get("contrato", "")).strip())
+        if not resultado:
+            continue
+        cons.at[idx, "NOMBRE EXPEDIENTE"] = resultado.get("carpeta", "")
+        cons.at[idx, "alfresco"] = (
+            "SI" if resultado.get("estado_alfresco") == "ENCONTRADA" else "NO"
+        )
+        cons.at[idx, "cantidad_archivos"] = str(resultado.get("cantidad_archivos", ""))
+    return cons
+
+
+def fase_alfresco_mcp(args, salidas: dict) -> dict:
+    """Verifica Alfresco por API REST y genera el Excel de auditoría documental.
+
+    Sustituye a la FASE 3 con Selenium. Usa el gateway REST y el motor de
+    auditoría; refresca 03/04 en vivo cada pocos contratos.
+    """
+    logger.info("=" * 60)
+    logger.info("FASE 3 (MCP): Verificación en Alfresco y auditoría documental")
+    logger.info("=" * 60)
+
+    if args.skip_alfresco:
+        logger.info("--skip-alfresco: se omite la verificación.")
+        return {}
+
+    from src.alfresco_mcp.motor import ejecutar_auditoria
+    from src.alfresco_mcp.rest_gateway import RestAlfrescoGateway
+
+    ruta_consolidado = salidas["verificacion"]
+    if not os.path.isfile(ruta_consolidado):
+        logger.error("No existe el consolidado 02 (%s) para verificar.", ruta_consolidado)
+        sys.exit(1)
+    cons = pd.read_csv(ruta_consolidado, encoding="utf-8-sig", dtype=str).fillna("")
+    if cons.empty:
+        logger.error("El consolidado 02 está vacío; no hay contratos por verificar.")
+        sys.exit(1)
+
+    base = (
+        os.getenv("ALFRESCO_URL")
+        or os.getenv("ALFRESCO_SHARE_URL")
+        or "https://gesdoc.uis.edu.co/share/page"
+    )
+    usuario = (
+        os.getenv("ALFRESCO_USER")
+        or os.getenv("ALFRESCO_SHARE_USER")
+        or "consulta_contratos"
+    )
+    contrasena = os.getenv("ALFRESCO_PASS", "").strip() or os.getenv("ALFRESCO_SHARE_PASS", "").strip()
+    if not contrasena:
+        logger.error("Falta la contraseña de Alfresco (ALFRESCO_PASS o ALFRESCO_SHARE_PASS).")
+        sys.exit(1)
+
+    from src.auditoria_documental.diccionario import buscar_diccionario
+
+    ruta_diccionario = buscar_diccionario(getattr(args, "ruta_diccionario", None) or "")
+    if not ruta_diccionario:
+        logger.error(
+            "No se encontró el diccionario de documentos en %s. Defínalo con "
+            "--ruta-diccionario o coloque 'Diccionario_Documentos.xlsx' o "
+            "'Matriz_Documentos_por_Clase*.xlsx' en esa carpeta.",
+            MATRIZ_MANUAL_DIR,
+        )
+        sys.exit(1)
+
+    interno = salidas.get("interno") or salidas["carpeta"]
+    ruta_06 = os.path.join(interno, "06_Verificacion_Alfresco.csv")
+    ruta_07 = salidas.get("faltantes") or os.path.join(interno, "07_Expedientes_Faltantes.csv")
+    periodo = ""
+    fecha_rev = ""
+    if getattr(args, "fecha_fin", None):
+        try:
+            periodo = args.fecha_fin.strftime("%Y-%m")
+            fecha_rev = args.fecha_fin.strftime("%Y-%m-%d")
+        except Exception:  # noqa: BLE001
+            periodo = ""
+            fecha_rev = ""
+    ruta_09 = salidas.get("auditoria") or os.path.join(salidas["carpeta"], "Auditoria_Contratos.xlsx")
+
+    gateway = RestAlfrescoGateway(
+        base_url=base,
+        usuario=usuario,
+        contrasena=contrasena,
+        verify_ssl=os.getenv("ALFRESCO_VERIFY_SSL", "false").lower() == "true",
+        timeout=int(os.getenv("ALFRESCO_TIMEOUT", "15")),
+        auth_method=os.getenv("ALFRESCO_AUTH_METHOD", "basic"),
+    )
+
+    estado = {"resultados": []}
+
+    def _on_resultado(resultado):
+        estado["resultados"].append(resultado)
+
+    try:
+        resumen = ejecutar_auditoria(
+            cons,
+            gateway,
+            ruta_diccionario=ruta_diccionario,
+            ruta_06=ruta_06,
+            ruta_07=ruta_07,
+            ruta_09=ruta_09,
+            periodo=periodo,
+            on_resultado=_on_resultado,
+        )
+    finally:
+        gateway.cerrar()
+
+    # Consolidado enriquecido (interno, para trazabilidad; no es entregable).
+    try:
+        _consolidado_enriquecido(cons, estado["resultados"]).to_csv(
+            ruta_consolidado, index=False, encoding="utf-8-sig"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo guardar el consolidado interno: %s", exc)
+
+    # Borradores de correo (interno; no es entregable).
+    ruta_correos = salidas.get("correos_auditoria") or os.path.join(
+        interno, "10_Correos_Auditoria.txt"
+    )
+    try:
+        from src.auditoria_documental.correos import generar_borradores
+
+        generar_borradores(
+            estado["resultados"],
+            ruta_correos,
+            ruta_diccionario=ruta_diccionario,
+            fecha_revision=fecha_rev,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudieron generar los borradores de correo: %s", exc)
+
+    # Informe HTML (entregable principal del servicio).
+    ruta_informe = salidas.get("informe") or os.path.join(
+        salidas["carpeta"], "Informe_Auditoria_Contrato.html"
+    )
+    try:
+        from src.auditoria_documental.informe_html import generar_informe
+
+        generar_informe(
+            estado["resultados"],
+            ruta_informe,
+            periodo=periodo,
+            fecha_revision=fecha_rev,
+        )
+        logger.info("Informe HTML de auditoría: %s", ruta_informe)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo generar el informe HTML: %s", exc)
+
+    logger.info(
+        "Auditoría: %d contratos | %d encontradas | %d no encontradas",
+        resumen["total"], resumen["encontradas"], resumen["no_encontradas"],
+    )
+    logger.info("Excel de auditoría documental: %s", resumen["ruta_09"])
+    return resumen
 
 
 def fase_merge_alfresco(args, salidas: dict) -> str:
@@ -469,6 +678,18 @@ def parsear_argumentos() -> argparse.Namespace:
         default=None,
         help="CSV unificado a leer para notificar (opcional).",
     )
+    parser.add_argument(
+        "--backend-alfresco",
+        choices=["mcp", "selenium"],
+        default="mcp",
+        help="Motor de Alfresco: 'mcp' (API REST, por defecto) o 'selenium' (legado).",
+    )
+    parser.add_argument(
+        "--ruta-diccionario",
+        type=str,
+        default=None,
+        help="Ruta a Diccionario_Documentos.xlsx (por defecto en 00_Datos_Raw).",
+    )
     return parser.parse_args()
 
 
@@ -501,28 +722,37 @@ def main():
         """
         #Paso 1: Ejecuta la fase_uisard para extraer los datos de UISARD. Hace el login en la plataforma
         logger.info("Inicio del bloque UISARD/Alfresco")
-        fase_uisard(args)
-        #paso 2: genera un archivo csv con los datos recopilados en UISARD y los guarda en 
-        df = fase_conciliacion(args, salidas)
-        logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
-        #paso 3: concatena los 3 tipos de contratos extraídos de alfresco y los guarda en un archivo csv
-        fase_unificacion(args, salidas, df)
+        #Paso 1: Ejecuta la fase_uisard para extraer los datos de UISARD. Hace el login en la plataforma
+        backend = getattr(args, "backend_alfresco", "mcp")
+        if backend == "mcp":
+            logger.info("Backend de Alfresco: MCP/REST — flujo de nuevas versiones (sin UISARD)")
+            fase_consolidacion_mcp(args, salidas)
+            fase_alfresco_mcp(args, salidas)
+        else:
+            logger.info("Inicio del bloque UISARD/Alfresco (backend Selenium legado)")
+            fase_uisard(args)
+            #paso 2: genera un archivo csv con los datos recopilados en UISARD y los guarda en 
+            df = fase_conciliacion(args, salidas)
+            logger.info("Consolidado listo (%d filas): %s", len(df), salidas["csv"])
+            #paso 3: concatena los 3 tipos de contratos extraídos de alfresco y los guarda en un archivo csv
+            fase_unificacion(args, salidas, df)
 
-        #Modulo 3 ---------------------------------------------------------------------------------------
-        """"
-        Este modulo tiene como objetivo la siguiente serie de pasos
-        paso 1: Entrar y autenticarse en la plataforma de Alfresco y verificar los contratos que se encuentran en el archivo csv generado en el paso anterior.
-        paso 2: notificar a los ordenadores
-        """
-        #La verificación de Alfresco se hace únicamente sobre el consolidado UISARD (01_...).
+            #Modulo 3 ---------------------------------------------------------------------------------------
+            """"
+            Este modulo tiene como objetivo la siguiente serie de pasos
+            paso 1: Entrar y autenticarse en la plataforma de Alfresco y verificar los contratos que se encuentran en el archivo csv generado en el paso anterior.
+            paso 2: notificar a los ordenadores
+            """
+            #La verificación de Alfresco se hace únicamente sobre el consolidado UISARD (01_...).
+            fase_alfresco(args, salidas)
 
-        fase_alfresco(args, salidas)
-        # Se incorpora el resultado al consolidado 02 (alfresco + cantidad_archivos).
-        fase_merge_alfresco(args, salidas)
-        # Reporte maestro final (resumen de UISARD + archivos encontrados).
-        fase_resultados(args, salidas)
-        fase_notificacion(args, salidas)
-        logger.info("Proceso completo: bloque propio y bloque UISARD/Alfresco finalizados.")
+            # Se incorpora el resultado al consolidado 02 (alfresco + cantidad_archivos).
+            fase_merge_alfresco(args, salidas)
+            # Reporte maestro final (resumen de UISARD + archivos encontrados).
+            fase_resultados(args, salidas)
+            fase_notificacion(args, salidas)
+
+        logger.info("Proceso completo (backend=%s).", backend)
 
     except KeyboardInterrupt:
         logger.info("Proceso interrumpido por el usuario.")
@@ -533,9 +763,11 @@ def main():
         logger.critical("Error fatal en el proceso: %s", exc, exc_info=True)
         sys.exit(1)
     finally:
-         # Purga automática de archivos antiguos (logs, diagnósticos y reportes).
+         # Purga automática de archivos antiguos (logs, diagnósticos y reportes)
+         # y de los archivos internos generados en la sesión.
         try:
             limpiar(BASE_DIR, serie=True)
+            limpiar_salidas(BASE_DIR)
         except Exception as exc:
             logger.warning("Fallo durante la limpieza automática: %s", exc)
 

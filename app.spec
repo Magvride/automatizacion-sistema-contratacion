@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller configuration for the Windows desktop application.
 
-The browser files are downloaded by ``build_gui.ps1`` into
-``build/playwright_browsers`` before this specification is evaluated.
+Aplicación basada en MCP/REST: ya no se empaquetan Selenium, Playwright ni
+Chromium. El backend legado (``--backend-alfresco selenium``) solo funciona en
+entorno de desarrollo con esas dependencias instaladas.
 """
 
 from pathlib import Path
@@ -11,7 +12,6 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
 ROOT = Path(SPEC).resolve().parent
-BROWSER_DIR = ROOT / "build" / "playwright_browsers"
 
 datas = [
     (str(ROOT / "desktop" / "assets"), "desktop/assets"),
@@ -24,26 +24,24 @@ hiddenimports = [
     "src",
 ]
 
-# PyQt6, Selenium and Playwright contain dynamically discovered modules and
-# support data. Selenium's Chrome implementation imports its concrete driver
-# module dynamically, so collecting the whole package avoids runtime failures
-# such as ``No module named selenium.webdriver.chrome.webdriver``.
-for package in ("PyQt6", "selenium", "playwright", "playwright_stealth"):
+# PyQt6 contiene módulos y datos descubiertos dinámicamente.
+for package in ("PyQt6",):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas.extend(package_datas)
     binaries.extend(package_binaries)
     hiddenimports.extend(package_hiddenimports)
 
 hiddenimports.extend(collect_submodules("desktop"))
-hiddenimports.extend(collect_submodules("src"))
 
-if not BROWSER_DIR.is_dir():
-    raise SystemExit(
-        "No se encontró Chromium de Playwright en "
-        f"{BROWSER_DIR}. Ejecute build_gui.ps1 antes de PyInstaller."
+# Se excluyen los módulos legados de scraping (Selenium/Playwright): el flujo
+# empaquetado usa solo el backend MCP/REST.
+_LEGACY = ("uisard_extractor", "alfresco_extractor", "uis_login_p1")
+hiddenimports.extend(
+    collect_submodules(
+        "src",
+        filter=lambda name: not any(legacy in name for legacy in _LEGACY),
     )
-
-datas.append((str(BROWSER_DIR), "playwright_browsers"))
+)
 
 analysis = Analysis(
     [str(ROOT / "desktop" / "__main__.py")],
@@ -53,8 +51,8 @@ analysis = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[str(ROOT / "packaging" / "rthook_playwright.py")],
-    excludes=["tkinter"],
+    runtime_hooks=[],
+    excludes=["tkinter", "selenium", "playwright", "playwright_stealth"],
     noarchive=False,
 )
 

@@ -3,6 +3,7 @@
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -45,6 +46,14 @@ class ActionBar(Card):
         fila.addWidget(self.btn_detener)
         fila.addWidget(self.btn_continuar)
         fila.addStretch(1)
+
+        self.chk_demo = QCheckBox("Modo demo (Alfresco simulado)")
+        self.chk_demo.setObjectName("DemoCheck")
+        self.chk_demo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chk_demo.setToolTip(
+            "Ejecuta el flujo completo con datos simulados, sin credenciales ni Alfresco."
+        )
+        fila.addWidget(self.chk_demo)
         fila.addWidget(self.btn_onedrive)
 
         nota = QWidget()
@@ -74,3 +83,8 @@ class ActionBar(Card):
         self.btn_detener.setEnabled(en_ejecucion)
         self.btn_continuar.setEnabled(en_ejecucion)
         self.btn_onedrive.setEnabled(not en_ejecucion)
+        self.chk_demo.setEnabled(not en_ejecucion)
+
+    def en_demo(self) -> bool:
+        """True si el usuario activó el modo demo (sin Alfresco)."""
+        return self.chk_demo.isChecked()

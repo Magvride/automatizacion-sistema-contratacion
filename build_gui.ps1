@@ -5,8 +5,6 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $venv = Join-Path $root ".build-venv"
 $python = Join-Path $venv "Scripts\python.exe"
-$playwright = Join-Path $venv "Scripts\playwright.exe"
-$browserPath = Join-Path $root "build\playwright_browsers"
 $distPath = Join-Path $root "dist"
 $workPath = Join-Path $root "build\pyinstaller"
 $updaterWorkPath = Join-Path $workPath "updater"
@@ -21,23 +19,18 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Test-Path -LiteralPath $venv)) {
-    Write-Host "[1/5] Creando entorno aislado de compilación..."
+    Write-Host "[1/4] Creando entorno aislado de compilación..."
     & python -m venv $venv
 } else {
-    Write-Host "[1/5] Reutilizando entorno de compilación..."
+    Write-Host "[1/4] Reutilizando entorno de compilación..."
 }
 
-Write-Host "[2/5] Instalando requirements de ejecución y GUI..."
+Write-Host "[2/4] Instalando requirements de ejecución y GUI..."
 & $python -m pip install --upgrade pip
 & $python -m pip install -r (Join-Path $root "requirements.txt")
 & $python -m pip install -r (Join-Path $root "requirements-gui.txt")
 
-Write-Host "[3/5] Descargando Chromium de Playwright..."
-$env:PLAYWRIGHT_BROWSERS_PATH = $browserPath
-New-Item -ItemType Directory -Path $browserPath -Force | Out-Null
-& $playwright install chromium
-
-Write-Host "[4/5] Empaquetando la GUI con PyInstaller..."
+Write-Host "[3/4] Empaquetando la GUI con PyInstaller..."
 & $python (Join-Path $root "desktop\assets\generar_icono.py")
 & $python -m PyInstaller (Join-Path $root "app.spec") --noconfirm --clean --distpath $distPath --workpath $workPath
 
@@ -54,16 +47,6 @@ if (-not (Test-Path -LiteralPath $exe)) {
     throw "PyInstaller no generó el ejecutable esperado: $exe"
 }
 
-$analysis = Join-Path $workPath "app\Analysis-00.toc"
-if (-not (Test-Path -LiteralPath $analysis)) {
-    throw "No se encontró el análisis de PyInstaller para validar Selenium: $analysis"
-}
-
-$analysisText = Get-Content -LiteralPath $analysis -Raw
-if ($analysisText -notmatch "selenium\.webdriver\.chrome\.webdriver") {
-    throw "El paquete generado no contiene selenium.webdriver.chrome.webdriver. No se creará un instalador incompleto."
-}
-
 $iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $iscc) {
     throw "Inno Setup 6 no está instalado. Instálelo desde https://jrsoftware.org/isdl.php y vuelva a ejecutar este script."
@@ -76,4 +59,6 @@ if ($versionText -notmatch '__version__\s*=\s*["'']([^"'']+)["'']') {
 }
 $appVersion = $Matches[1]
 & $iscc "/DMyAppVersion=$appVersion" (Join-Path $root "installer.iss")
+Write-Host "[4/4] Generando instalador .exe..."
+& $iscc (Join-Path $root "installer.iss")
 Write-Host "Instalador generado en installer_output\"
