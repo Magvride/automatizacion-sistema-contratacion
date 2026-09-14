@@ -6,19 +6,12 @@
 ;   1) powershell -ExecutionPolicy Bypass -File build_gui.ps1
 ;   2) "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ;
-<<<<<<< HEAD
 ; Resultado: installer_output\Setup_ContratacionesETL_<version>.exe
 
 #define MyAppName "Sistema Automatizado de Contrataciones"
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.6.0"
 #endif
-=======
-; Resultado: installer_output\Setup_ContratacionesETL_1.0.0.exe
-
-#define MyAppName "Sistema Automatizado de Contrataciones"
-#define MyAppVersion "1.0.0"
->>>>>>> DEV_Mejora_MCP
 #define MyAppPublisher "Universidad Industrial de Santander"
 #define MyAppExeName "SistemaContrataciones.exe"
 

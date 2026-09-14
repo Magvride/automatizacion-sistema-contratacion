@@ -26,6 +26,9 @@ _SUFIJOS_SHARE = ("/share/page", "/share")
 # Reintentos ante errores transitorios (BadStatusLine / cortes de conexión).
 REINTENTOS_POR_DEFECTO = 3
 
+# Códigos HTTP transitorios del proxy/Alfresco que conviene reintentar.
+_ESTADOS_REINTENTABLES = frozenset({429, 500, 502, 503, 504})
+
 
 class RestAlfrescoGateway(AlfrescoGateway):
     """Cliente REST de Alfresco.
@@ -91,21 +94,29 @@ class RestAlfrescoGateway(AlfrescoGateway):
     def _ejecutar(self, funcion, *args, **kwargs):
         """Ejecuta una petición con reintentos ante errores transitorios.
 
-        Alfresco 7.x devuelve de forma esporádica ``BadStatusLine HTTP/1.1 0``;
-        el proyecto de referencia lo resolvía con reintentos y backoff.
+        Alfresco 7.x devuelve de forma esporádica ``BadStatusLine HTTP/1.1 0``
+        y, bajo carga, su proxy responde ``502/503/504``; el proyecto de
+        referencia lo resolvía con reintentos y backoff. Se reintentan tanto
+        los cortes de conexión como los estados HTTP transitorios.
         """
         ultimo = None
         for intento in range(1, self.reintentos + 1):
             try:
-                return funcion(*args, **kwargs)
+                respuesta = funcion(*args, **kwargs)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 ultimo = exc
-                logger.warning(
-                    "Error transitorio de Alfresco (intento %d/%d): %s",
-                    intento, self.reintentos, exc,
+            else:
+                if getattr(respuesta, "status_code", 200) not in _ESTADOS_REINTENTABLES:
+                    return respuesta
+                ultimo = requests.exceptions.HTTPError(
+                    f"{respuesta.status_code} de Alfresco", response=respuesta
                 )
-                if intento < self.reintentos:
-                    time.sleep(0.7 * intento)
+            logger.warning(
+                "Error transitorio de Alfresco (intento %d/%d): %s",
+                intento, self.reintentos, ultimo,
+            )
+            if intento < self.reintentos:
+                time.sleep(0.7 * intento)
         raise ultimo
 
     def _get(self, url: str, params: dict = None):

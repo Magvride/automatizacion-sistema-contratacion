@@ -20,6 +20,7 @@ claro para que el flujo lo reporte en lugar de fallar en silencio.
 import os
 import re
 import unicodedata
+from pathlib import Path
 
 import openpyxl
 
@@ -42,6 +43,10 @@ NOMBRES_DICCIONARIO = (
     "Matriz_Documentos_por_Clase.xlsx",
 )
 PATRON_DICCIONARIO = "Matriz_Documentos_por_Clase*.xlsx"
+
+# Copia del diccionario incluida en la aplicación. Es el criterio de lectura por
+# defecto; no requiere que el usuario lo seleccione.
+DICCIONARIO_INTERNO = Path(__file__).resolve().parent / "data" / "Diccionario_Documentos.xlsx"
 
 # Clases soportadas (prefijo de contrato -> etiqueta de clase).
 CLASES_POR_PREFIJO = {
@@ -184,9 +189,10 @@ def _leer_primera_hoja(libro, nombres) -> list:
 def buscar_diccionario(ruta: str = "") -> str:
     """Resuelve la ruta del diccionario de documentos.
 
-    Prioridad: ruta explícita → ``Diccionario_Documentos.xlsx`` →
-    ``Matriz_Documentos_por_Clase*.xlsx``, todas dentro de ``00_Datos_Raw``.
-    Devuelve "" si no encuentra ninguna.
+    Prioridad: ruta explícita → archivo externo en ``00_Datos_Raw``
+    (``Diccionario_Documentos.xlsx`` o ``Matriz_Documentos_por_Clase*.xlsx``,
+    permite actualizar el diccionario sin recompilar) → copia interna incluida
+    en la aplicación. Devuelve "" si no encuentra ninguna.
     """
     if ruta and os.path.isfile(ruta):
         return str(ruta)
@@ -196,6 +202,9 @@ def buscar_diccionario(ruta: str = "") -> str:
     for candidato in candidatos:
         if candidato.is_file():
             return str(candidato)
+
+    if DICCIONARIO_INTERNO.is_file():
+        return str(DICCIONARIO_INTERNO)
     return ""
 
 

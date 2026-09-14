@@ -21,7 +21,7 @@ import io
 import os
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from utils.logger import configurar_logger
@@ -111,6 +111,34 @@ _CABECERAS_EXCEL = [
     "CONTRATO", "CLASE", "CONTRATISTA", "VALOR", "FECHA INICIO", "FECHA FIN",
     "ORDENADOR", "ESTADO", "DOCS HALLADOS", "DOCS REQUERIDOS",
     "DOCS FALTANTES", "% COMPLETITUD", "CARPETA ALFRESCO", "CARPETA",
+    "DOCUMENTOS FALTANTES (DETALLE)",
+]
+
+# Hojas de detalle del Excel embebido: qué documento tiene o le falta a cada
+# contrato, según el diccionario de documentos obligatorios.
+_CABECERAS_DETALLE = [
+    "CONTRATO", "CLASE", "CONTRATISTA", "ETAPA", "ID_DOC", "FORMATO",
+    "DOCUMENTO", "ALIAS", "ESTADO", "ARCHIVO", "CARPETA ALFRESCO",
+]
+_ANCHOS_DETALLE = [16, 8, 30, 30, 8, 10, 40, 40, 12, 45, 24]
+
+_CABECERAS_FALTANTES = [
+    "CONTRATO", "CLASE", "CONTRATISTA", "ETAPA", "ID_DOC", "FORMATO",
+    "DOCUMENTO", "ALIAS", "CARPETA ALFRESCO",
+]
+_ANCHOS_FALTANTES = [16, 8, 30, 30, 8, 10, 40, 40, 24]
+
+_CABECERAS_ETAPA = [
+    "CONTRATO", "CLASE", "CONTRATISTA", "ETAPA", "ENCONTRADOS", "ESPERADOS",
+    "FALTANTES", "% CUMPLIMIENTO",
+]
+_ANCHOS_ETAPA = [16, 8, 30, 34, 12, 11, 11, 14]
+
+_CABECERAS_LEYENDA = ["ESTADO", "SIGNIFICADO"]
+_FILAS_LEYENDA = [
+    (ENCONTRADO, "Documento obligatorio hallado en la carpeta de Alfresco."),
+    (FALTANTE, "Documento obligatorio exigido por el diccionario que no se encontró."),
+    (NO_APLICA, "Documento eximido para este contrato (regla del diccionario, p. ej. FCO.74 exime cierre)."),
 ]
 
 
@@ -279,16 +307,58 @@ def _tabla_resumen(resultados: list) -> str:
     )
 
 
+def _detalle_faltantes_texto(resultado: dict) -> str:
+    """Lista legible de los documentos faltantes (formato + documento)."""
+    partes = []
+    for fila in resultado.get("filas") or []:
+        if str(fila.get("ESTADO", "")).upper() != FALTANTE:
+            continue
+        formato = str(fila.get("FORMATO", "")).strip()
+        documento = str(fila.get("DOCUMENTO", "")).strip()
+        partes.append(f"{formato} {documento}".strip())
+    return ", ".join(partes)
+
+
+def _preparar_hoja(hoja, cabeceras: list, anchos: list) -> None:
+    """Escribe la cabecera con estilo y ajusta anchos de una hoja de detalle."""
+    hoja.append(cabeceras)
+    for celda in hoja[1]:
+        celda.font = Font(bold=True, color="FFFFFF")
+        celda.fill = PatternFill("solid", fgColor="1F4E78")
+        celda.alignment = Alignment(vertical="center", wrap_text=True)
+    for columna, ancho in enumerate(anchos, start=1):
+        hoja.column_dimensions[get_column_letter(columna)].width = ancho
+    hoja.freeze_panes = "A2"
+
+
+def _cerrar_hoja(hoja) -> None:
+    """Activa el autofiltro sobre el rango de datos de una hoja de detalle."""
+    if hoja.max_row > 1:
+        fin = get_column_letter(hoja.max_column)
+        hoja.auto_filter.ref = f"A1:{fin}{hoja.max_row}"
+
+
 def _excel_resumen_b64(resultados: list) -> str:
-    """Genera el Excel de la tabla resumen y lo devuelve en base64."""
+    """Genera el Excel del informe (resumen + detalle por documento).
+
+    El libro incluye:
+
+    * ``Contratos`` — resumen por contrato con el detalle de faltantes.
+    * ``Detalle_Documentos`` — una fila por documento del diccionario evaluado,
+      indicando si se encontró, falta o no aplica.
+    * ``Faltantes`` — solo lo que le falta a cada contrato.
+    * ``Por_Etapa`` — cumplimiento por contrato y etapa.
+    * ``Leyenda`` — significado de los estados.
+    """
     libro = Workbook()
+
     hoja = libro.active
     hoja.title = "Contratos"
-
     hoja.append(_CABECERAS_EXCEL)
     for celda in hoja[1]:
         celda.font = Font(bold=True, color="FFFFFF")
         celda.fill = PatternFill("solid", fgColor="1F4E78")
+        celda.alignment = Alignment(vertical="center", wrap_text=True)
 
     for r in resultados:
         encontrada = str(r.get("estado_alfresco", "")).upper() == "ENCONTRADA"
@@ -307,11 +377,67 @@ def _excel_resumen_b64(resultados: list) -> str:
             f"{r.get('pct_cumpl', 0)}%",
             "Sí" if encontrada else "No",
             r.get("carpeta", ""),
+            _detalle_faltantes_texto(r),
         ])
 
-    for columna, ancho in enumerate([16, 8, 30, 15, 12, 12, 26, 14, 12, 14, 12, 12, 10, 24], start=1):
+    for columna, ancho in enumerate(
+        [16, 8, 30, 15, 12, 12, 26, 14, 12, 14, 12, 12, 10, 24, 60], start=1
+    ):
         hoja.column_dimensions[get_column_letter(columna)].width = ancho
     hoja.freeze_panes = "A2"
+
+    hoja_detalle = libro.create_sheet("Detalle_Documentos")
+    _preparar_hoja(hoja_detalle, _CABECERAS_DETALLE, _ANCHOS_DETALLE)
+
+    hoja_faltantes = libro.create_sheet("Faltantes")
+    _preparar_hoja(hoja_faltantes, _CABECERAS_FALTANTES, _ANCHOS_FALTANTES)
+
+    hoja_etapa = libro.create_sheet("Por_Etapa")
+    _preparar_hoja(hoja_etapa, _CABECERAS_ETAPA, _ANCHOS_ETAPA)
+
+    for r in resultados:
+        contrato = r.get("contrato", "")
+        clase = r.get("cod", "")
+        contratista = r.get("contratista", "")
+        carpeta = r.get("carpeta", "")
+        filas = r.get("filas") or []
+
+        for fila in filas:
+            estado = str(fila.get("ESTADO", "")).upper()
+            hoja_detalle.append([
+                contrato, clase, contratista,
+                fila.get("ETAPA", "") or "Sin etapa",
+                fila.get("ID_DOC", ""), fila.get("FORMATO", ""),
+                fila.get("DOCUMENTO", ""), fila.get("ALIAS", ""),
+                fila.get("ESTADO", ""), fila.get("ARCHIVO", ""), carpeta,
+            ])
+            if estado == FALTANTE:
+                hoja_faltantes.append([
+                    contrato, clase, contratista,
+                    fila.get("ETAPA", "") or "Sin etapa",
+                    fila.get("ID_DOC", ""), fila.get("FORMATO", ""),
+                    fila.get("DOCUMENTO", ""), fila.get("ALIAS", ""), carpeta,
+                ])
+
+        grupos = _agrupar_por_etapa(filas)
+        for etapa in ordenar_etapas(grupos.keys()):
+            docs = grupos[etapa]
+            encontrados = sum(1 for f in docs if str(f.get("ESTADO", "")).upper() == ENCONTRADO)
+            faltantes = sum(1 for f in docs if str(f.get("ESTADO", "")).upper() == FALTANTE)
+            esperados = encontrados + faltantes
+            pct = round(encontrados * 100 / esperados, 1) if esperados else 0.0
+            hoja_etapa.append([
+                contrato, clase, contratista, etapa,
+                encontrados, esperados, faltantes, f"{pct}%",
+            ])
+
+    for hoja_det in (hoja_detalle, hoja_faltantes, hoja_etapa):
+        _cerrar_hoja(hoja_det)
+
+    hoja_leyenda = libro.create_sheet("Leyenda")
+    _preparar_hoja(hoja_leyenda, _CABECERAS_LEYENDA, [16, 90])
+    for estado, significado in _FILAS_LEYENDA:
+        hoja_leyenda.append([estado, significado])
 
     buffer = io.BytesIO()
     libro.save(buffer)
@@ -365,9 +491,12 @@ def generar_informe(resultados: list, ruta: str, periodo: str = "", fecha_revisi
   <div class="barra">
     <a class="btn" download="{_e(nombre_excel)}" href="data:{_MIME_XLSX};base64,{excel_b64}">Descargar Excel</a>
     <a class="btn" href="javascript:imprimir()">Descargar PDF</a>
-    <span class="vacio">Descarga la tabla en Excel o guarda el informe completo en PDF.</span>
+    <button class="btn" type="button" id="btn-resumen" onclick="alternarResumen()">Ocultar contratos</button>
+    <span class="vacio">El Excel incluye resumen, detalle documento a documento, faltantes y cumplimiento por etapa. También puedes guardar el informe en PDF.</span>
   </div>
-  {_tabla_resumen(resultados)}
+  <div id="resumen-contratos">
+    {_tabla_resumen(resultados)}
+  </div>
 
   <details class="modulo" open>
     <summary>Contratos con carpeta en Alfresco <span class="pill">{len(con_carpeta)}</span></summary>
@@ -387,7 +516,16 @@ def generar_informe(resultados: list, ruta: str, periodo: str = "", fecha_revisi
 </div>
 <footer>Generado por el servicio «Auditoría Documental Automatizada».</footer>
 <script>
+function alternarResumen(){{
+  var cont = document.getElementById('resumen-contratos');
+  var btn = document.getElementById('btn-resumen');
+  var oculto = cont.style.display === 'none';
+  cont.style.display = oculto ? '' : 'none';
+  btn.textContent = oculto ? 'Ocultar contratos' : 'Mostrar contratos';
+}}
 function imprimir(){{
+  var cont = document.getElementById('resumen-contratos');
+  if (cont) {{ cont.style.display = ''; }}
   document.querySelectorAll('details').forEach(function(d){{ d.open = true; }});
   window.print();
 }}

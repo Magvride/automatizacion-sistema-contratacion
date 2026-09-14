@@ -366,18 +366,18 @@ def fase_alfresco_mcp(args, salidas: dict) -> dict:
         sys.exit(1)
 
     base = (
-        os.getenv("ALFRESCO_URL")
-        or os.getenv("ALFRESCO_SHARE_URL")
+        os.getenv("ALFRESCO_SHARE_URL")
+        or os.getenv("ALFRESCO_URL")
         or "https://gesdoc.uis.edu.co/share/page"
     )
     usuario = (
-        os.getenv("ALFRESCO_USER")
-        or os.getenv("ALFRESCO_SHARE_USER")
+        os.getenv("ALFRESCO_SHARE_USER")
+        or os.getenv("ALFRESCO_USER")
         or "consulta_contratos"
     )
-    contrasena = os.getenv("ALFRESCO_PASS", "").strip() or os.getenv("ALFRESCO_SHARE_PASS", "").strip()
+    contrasena = os.getenv("ALFRESCO_SHARE_PASS", "").strip() or os.getenv("ALFRESCO_PASS", "").strip()
     if not contrasena:
-        logger.error("Falta la contraseña de Alfresco (ALFRESCO_PASS o ALFRESCO_SHARE_PASS).")
+        logger.error("Falta la contraseña de Alfresco (ALFRESCO_SHARE_PASS o ALFRESCO_PASS).")
         sys.exit(1)
 
     from src.auditoria_documental.diccionario import buscar_diccionario

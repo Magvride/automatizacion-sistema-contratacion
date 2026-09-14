@@ -63,6 +63,31 @@ def test_elegir_carpeta_estricto_y_laxo():
     assert vacio is None and ok is False
 
 
+def test_elegir_carpeta_prioriza_tipo_sobre_numero():
+    candidatas = [
+        {"id": "otro", "nombre": "0270_2026000271_9876"},
+        {"id": "ops", "nombre": "0018_2026000271_7025"},
+        {"id": "correcta", "nombre": "298-2026000271_2127"},
+    ]
+    carpeta, ok = elegir_carpeta(candidatas, "2026000271", "0298")
+    assert carpeta["id"] == "correcta"
+    assert ok is False  # prefijo sin ceros a la izquierda (298 vs 0298)
+
+
+def test_elegir_carpeta_no_confunde_otro_tipo():
+    carpeta, ok = elegir_carpeta(
+        [{"id": "otro", "nombre": "0270_2026000271_9876"}], "2026000271", "0298"
+    )
+    assert carpeta is None and ok is False
+
+
+def test_elegir_carpeta_prefijo_sin_ceros():
+    carpeta, ok = elegir_carpeta(
+        [{"id": "a", "nombre": "234_2026008330_2170"}], "2026008330", "0234"
+    )
+    assert carpeta["id"] == "a" and ok is False
+
+
 def test_verificar_contrato_encontrado():
     gateway = FakeGateway(
         carpetas=[{"id": "n1", "nombre": "0020_2026000003_9707", "es_carpeta": True}],

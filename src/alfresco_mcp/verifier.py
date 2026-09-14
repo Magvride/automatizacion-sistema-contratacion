@@ -46,28 +46,67 @@ def numero_y_pad(contrato) -> tuple:
     return bloques[-1], ""
 
 
-def _clave_orden(texto) -> str:
-    return re.sub(r"[^0-9a-z]", "", str(texto or "").lower())
+def _partes_carpeta(nombre: str) -> tuple:
+    """Separa ``(prefijo, numero)`` del nombre de una carpeta de contrato.
+
+    Reconoce las variantes observadas en Alfresco, con guion o guion bajo y con
+    o sin ceros a la izquierda en el prefijo::
+
+        ``0020_2026000379_7083`` → ``("0020", "2026000379")``
+        ``298-2026000271_2127``  → ``("298", "2026000271")``
+        ``234_2026008330_2170``  → ``("234", "2026008330")``
+    """
+    coincidencia = re.match(r"^(\d+)[-_](\d+)", str(nombre or "").strip())
+    if not coincidencia:
+        return "", ""
+    return coincidencia.group(1), coincidencia.group(2)
+
+
+def _mismo_entero(izquierda, derecha) -> bool:
+    """Compara dos valores numéricos ignorando ceros a la izquierda."""
+    try:
+        return int(izquierda) == int(derecha)
+    except (TypeError, ValueError):
+        return False
 
 
 def elegir_carpeta(candidatas: list, numero: str, pad: str) -> tuple:
-    """Elige la carpeta correcta entre las candidatas.
+    """Elige la carpeta que coincide en **tipo (prefijo) y número**.
 
-    Devuelve ``(carpeta, estricto)`` o ``(None, False)``. Primero exige el ``pad``
-    (``0020_numero``); si no hay, acepta cualquier nombre que contenga el número
-    (segundo pase, para nomenclatura inconsistente ``20_...`` vs ``0020_...``).
+    El número de contrato no es único: se repite entre tipos (p. ej. ``298``,
+    ``0018`` y ``0270`` comparten ``2026000271``). La carpeta válida es la que
+    combina el prefijo del tipo con el número; nunca se elige una carpeta de
+    otro tipo solo por compartir el número.
+
+    Se prefieren las coincidencias con el prefijo tal cual (``estricto=True``);
+    si solo coincide sin los ceros a la izquierda (``20`` vs ``0020``, ``298``
+    vs ``0298``) se acepta como ``estricto=False``. Devuelve ``(carpeta,
+    estricto)`` o ``(None, False)``.
     """
-    prefijo = f"{pad}_{numero}" if pad else numero
-    for candidata in candidatas or []:
-        nombre = _clave_orden(candidata.get("nombre", ""))
-        if nombre.startswith(_clave_orden(prefijo)):
-            return candidata, True
+    if not numero:
+        return None, False
 
+    estricta = None
+    laxa = None
     for candidata in candidatas or []:
-        nombre = _clave_orden(candidata.get("nombre", ""))
-        if numero and numero in nombre:
-            return candidata, False
+        prefijo_carpeta, numero_carpeta = _partes_carpeta(candidata.get("nombre", ""))
+        if not _mismo_entero(numero_carpeta, numero):
+            continue
+        if not pad:
+            # Sin tipo conocido, el número basta.
+            if laxa is None:
+                laxa = candidata
+            continue
+        if prefijo_carpeta == str(pad):
+            if estricta is None:
+                estricta = candidata
+        elif _mismo_entero(prefijo_carpeta, pad) and laxa is None:
+            laxa = candidata
 
+    if estricta is not None:
+        return estricta, True
+    if laxa is not None:
+        return laxa, False
     return None, False
 
 
@@ -145,7 +184,7 @@ def verificar_contrato(
     descripcion = ""
 
     if not node_id:
-        candidatas = gateway.buscar_carpetas(numero, max_items=10) if numero else []
+        candidatas = gateway.buscar_carpetas(numero, max_items=25) if numero else []
         carpeta, estricto = elegir_carpeta(candidatas, numero, pad)
         if carpeta is None:
             filas = _enriquecer_fechas(
