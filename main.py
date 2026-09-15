@@ -61,7 +61,7 @@ def construir_salidas(base_dir: str) -> dict:
         "dashboard": os.path.join(interno, "04_Tablero_Resumen.html"),
         "dashboard_vivo": os.path.join(interno, "05_Tablero_en_Vivo.html"),
         "faltantes": os.path.join(interno, "07_Expedientes_Faltantes.csv"),
-        "auditoria": os.path.join(carpeta, "Auditoria_Contratos.xlsx"),
+        "auditoria": os.path.join(carpeta, "auditoria_contratos.xlsx"),
         "correos_auditoria": os.path.join(interno, "10_Correos_Auditoria.txt"),
         "informe": os.path.join(carpeta, "Informe_Auditoria_Contrato.html"),
     }
@@ -91,15 +91,7 @@ def paso_login_financiero(fecha_inicio: date, fecha_fin: date) -> None:
 
 
 def ejecutar_bloque_propio(args) -> None:
-    import src.seguimiento_p2
-
-    #if args.skip_financiero:
-        #logger.info("--skip-financiero: se omite el bloque propio.")
-        #return
-
-    #paso_login_financiero(args.fecha_inicio, args.fecha_fin)
-    print("[MAIN] Paso 2/5: actualización de la matriz de seguimiento")
-    src.seguimiento_p2.main()
+    logger.info("La matriz y la actualización automática están deshabilitadas; se usa el Excel cargado.")
 
 
 # ----------------------------------------------------------------------
@@ -291,24 +283,13 @@ def fase_alfresco(args, salidas: dict, ruta_csv: Optional[str] = None) -> None:
 #  FASE 2 (MCP) — Consolidación sin UISARD
 # ----------------------------------------------------------------------
 def fase_consolidacion_mcp(args, salidas: dict) -> pd.DataFrame:
-    """Construye el consolidado 02 solo con las nuevas versiones (sin UISARD)."""
-    logger.info("=" * 60)
-    logger.info("FASE 2 (MCP): Consolidación de nuevas versiones (sin UISARD)")
-    logger.info("=" * 60)
+    """Construye el consolidado directamente desde el Excel recibido."""
+    from src.consolidar import buscar_nuevas_versiones, construir_consolidado_desde_excel
 
-    from src.consolidar import buscar_csv_normalizados, construir_consolidado
-
-    ruta_base = buscar_csv_normalizados()
-    if not ruta_base:
-        logger.error(
-            "No hay CSV del bloque propio (contratos_normalizados*.csv). "
-            "Ejecute primero la actualización de la matriz."
-        )
-        sys.exit(1)
-
-    resultado = construir_consolidado(ruta_base, salidas["verificacion"])
+    ruta_excel = buscar_nuevas_versiones()
+    resultado = construir_consolidado_desde_excel(ruta_excel, salidas["verificacion"])
     if not resultado.get("encontrado"):
-        logger.error("No se pudo construir el consolidado 02 desde %s.", ruta_base)
+        logger.error("No se pudo construir el consolidado desde %s.", ruta_excel)
         sys.exit(1)
 
     df = pd.read_csv(salidas["verificacion"], encoding="utf-8-sig", dtype=str).fillna("")
@@ -339,7 +320,7 @@ def _consolidado_enriquecido(cons: pd.DataFrame, resultados: list) -> pd.DataFra
     return cons
 
 
-def fase_alfresco_mcp(args, salidas: dict) -> dict:
+def fase_alfresco_mcp(args, salidas: dict, on_progreso=None, on_resultado=None) -> dict:
     """Verifica Alfresco por API REST y genera el Excel de auditoría documental.
 
     Sustituye a la FASE 3 con Selenium. Usa el gateway REST y el motor de
@@ -404,7 +385,7 @@ def fase_alfresco_mcp(args, salidas: dict) -> dict:
         except Exception:  # noqa: BLE001
             periodo = ""
             fecha_rev = ""
-    ruta_09 = salidas.get("auditoria") or os.path.join(salidas["carpeta"], "Auditoria_Contratos.xlsx")
+    ruta_09 = salidas.get("auditoria") or os.path.join(salidas["carpeta"], "auditoria_contratos.xlsx")
 
     gateway = RestAlfrescoGateway(
         base_url=base,
@@ -419,6 +400,8 @@ def fase_alfresco_mcp(args, salidas: dict) -> dict:
 
     def _on_resultado(resultado):
         estado["resultados"].append(resultado)
+        if on_resultado:
+            on_resultado(resultado)
 
     try:
         resumen = ejecutar_auditoria(
@@ -429,6 +412,7 @@ def fase_alfresco_mcp(args, salidas: dict) -> dict:
             ruta_07=ruta_07,
             ruta_09=ruta_09,
             periodo=periodo,
+            on_progreso=on_progreso,
             on_resultado=_on_resultado,
         )
     finally:
@@ -480,6 +464,7 @@ def fase_alfresco_mcp(args, salidas: dict) -> dict:
         resumen["total"], resumen["encontradas"], resumen["no_encontradas"],
     )
     logger.info("Excel de auditoría documental: %s", resumen["ruta_09"])
+    resumen["resultados"] = estado["resultados"]
     return resumen
 
 

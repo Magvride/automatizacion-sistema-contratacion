@@ -22,6 +22,7 @@ logger = configurar_logger("nuevas_versiones")
 
 # Campo interno -> posibles encabezados en el reporte.
 COLUMNAS = {
+    "contrato": ("CONTRATO", "NUMERO CONTRATO"),
     "tipo": ("TIPO DE CONTRATO",),
     "unidad": ("UNIDAD SUPERIOR", "UNIDAD SUPERIOS"),
     "objeto": ("OBJETO CONTRATO",),
@@ -38,10 +39,15 @@ COLUMNAS = {
     "duracion": ("DURACION CONTRATO (DIAS)",),
     "estado_contrato": ("ESTADO ACTUAL CONTRATO",),
     "supervisor": ("NOMBRE SUPERVISOR",),
+    "ordenador": (
+        "ORDENADOR", "ORDENADOR DE GASTO", "ORDENADORES DE GASTO",
+        "ORDENADOR DE GASTO CENTRO DE COSTO",
+    ),
+    "centro_costo": ("CENTRO DE COSTO", "CENTRO COSTO"),
 }
 
 # Encabezados que identifican la fila de cabecera.
-_ANCLA = ("NUMERO CONTRATO", "TOTAL CONTRATADO")
+_ANCLA = ("NUMERO CONTRATO", "CONTRATO", "TOTAL CONTRATADO")
 
 _MAX_FILAS_CABECERA = 12
 
@@ -68,7 +74,7 @@ def numero_contrato(valor) -> str:
 def _buscar_cabecera(filas) -> tuple:
     for i, fila in enumerate(filas[:_MAX_FILAS_CABECERA]):
         claves = {_clave(c) for c in fila}
-        if "CONTRATO" in claves and any(a in claves for a in _ANCLA):
+        if any(a in claves for a in _ANCLA) and any(a in claves for a in ("NUMERO CONTRATO", "CONTRATO")):
             return i, fila
     return None, None
 
@@ -105,24 +111,41 @@ def leer_nuevas_versiones(ruta: str) -> dict:
     idx_numero = mapa.get("contrato")
     if idx_numero is None:
         idx_numero = next(
-            (j for j, c in enumerate(encabezados) if _clave(c) in ("NUMERO CONTRATO", "CONTRATO")),
+            (j for j, c in enumerate(encabezados) if _clave(c) == "CONTRATO"),
             None,
         )
+        if idx_numero is None:
+            idx_numero = next(
+                (j for j, c in enumerate(encabezados) if _clave(c) == "NUMERO CONTRATO"),
+                None,
+            )
 
     datos = {}
     for fila in filas[indice_cabecera + 1:]:
         if not any(c not in (None, "") for c in fila):
             continue
-        numero = numero_contrato(fila[idx_numero] if idx_numero is not None and idx_numero < len(fila) else "")
+        contrato_original = (
+            fila[idx_numero] if idx_numero is not None and idx_numero < len(fila) else ""
+        )
+        numero = numero_contrato(contrato_original)
         if not numero:
             continue
         registro = {}
         for campo, j in mapa.items():
             valor = fila[j] if j < len(fila) else ""
             registro[campo] = "" if valor is None else str(valor).strip()
-        datos[numero] = registro
+        registro["contrato"] = str(contrato_original).strip()
+        # Conserva también la clave numérica por compatibilidad con el cruce
+        # histórico, pero no permite que un contrato del mismo número la pise.
+        datos.setdefault(numero, registro)
+        datos[registro["contrato"]] = registro
 
-    logger.info("Nuevas versiones: %d contratos leídos de %s", len(datos), os.path.basename(ruta))
+    contratos_unicos = {str(registro.get("contrato", "")).strip() for registro in datos.values()}
+    contratos_unicos.discard("")
+    logger.info(
+        "Nuevas versiones: %d contratos leídos de %s",
+        len(contratos_unicos), os.path.basename(ruta),
+    )
     return datos
 
 

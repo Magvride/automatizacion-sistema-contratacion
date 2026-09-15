@@ -60,12 +60,9 @@ class StatusBar(QFrame):
 
         self.lbl_tiempo = QLabel("Tiempo transcurrido: 00:00:00")
         self.lbl_tiempo.setObjectName("StatusBarItem")
-        self.lbl_destino = QLabel("Destino: OneDrive")
-        self.lbl_destino.setObjectName("StatusBarItem")
 
         layout.addWidget(item1)
         layout.addWidget(self.lbl_tiempo)
-        layout.addWidget(self.lbl_destino)
         layout.addStretch(1)
 
     # ------------------------------------------------------------------
@@ -79,4 +76,4 @@ class StatusBar(QFrame):
         self.lbl_tiempo.setText(f"Tiempo transcurrido: {texto}")
 
     def set_destino(self, texto: str) -> None:
-        self.lbl_destino.setText(f"Destino: {texto}")
+        return None

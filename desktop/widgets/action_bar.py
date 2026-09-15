@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Barra de acciones: iniciar, detener, continuar y subir a OneDrive."""
+"""Barra mínima de acciones del proceso."""
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -34,39 +33,10 @@ class ActionBar(Card):
             "Detener", "OutlineButton", icons.STOP, theme.INK
         )
         self.btn_detener.setEnabled(False)
-        self.btn_continuar = self._boton(
-            "Continuar", "OutlineButton", icons.CONTINUE, theme.INK
-        )
-        self.btn_continuar.setEnabled(False)
-        self.btn_onedrive = self._boton(
-            "Subir a OneDrive", "SecondaryButton", icons.UPLOAD, "#FFFFFF"
-        )
 
         fila.addWidget(self.btn_iniciar)
         fila.addWidget(self.btn_detener)
-        fila.addWidget(self.btn_continuar)
         fila.addStretch(1)
-
-        self.chk_demo = QCheckBox("Modo demo (Alfresco simulado)")
-        self.chk_demo.setObjectName("DemoCheck")
-        self.chk_demo.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.chk_demo.setToolTip(
-            "Ejecuta el flujo completo con datos simulados, sin credenciales ni Alfresco."
-        )
-        fila.addWidget(self.chk_demo)
-        fila.addWidget(self.btn_onedrive)
-
-        nota = QWidget()
-        nota_layout = QHBoxLayout(nota)
-        nota_layout.setContentsMargins(0, 0, 0, 0)
-        nota_layout.setSpacing(6)
-        icono = QLabel()
-        icono.setPixmap(icons.svg_pixmap(icons.CLOCK, 13, theme.INK_FAINT))
-        texto = QLabel("Carga manual de reportes · verificación automática")
-        texto.setObjectName("ScheduleNote")
-        nota_layout.addWidget(icono)
-        nota_layout.addWidget(texto)
-        fila.addWidget(nota)
 
         layout.addLayout(fila)
 
@@ -81,10 +51,3 @@ class ActionBar(Card):
     def set_en_ejecucion(self, en_ejecucion: bool) -> None:
         self.btn_iniciar.setEnabled(not en_ejecucion)
         self.btn_detener.setEnabled(en_ejecucion)
-        self.btn_continuar.setEnabled(en_ejecucion)
-        self.btn_onedrive.setEnabled(not en_ejecucion)
-        self.chk_demo.setEnabled(not en_ejecucion)
-
-    def en_demo(self) -> bool:
-        """True si el usuario activó el modo demo (sin Alfresco)."""
-        return self.chk_demo.isChecked()

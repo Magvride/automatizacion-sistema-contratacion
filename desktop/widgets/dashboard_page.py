@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +37,25 @@ class DashboardPage(QWidget):
 
         layout.addWidget(self._crear_fuentes())
 
+        progreso = Card()
+        progreso_layout = QVBoxLayout(progreso)
+        progreso_layout.setContentsMargins(18, 14, 18, 14)
+        fila = QHBoxLayout()
+        self.lbl_contratos = QLabel("Contratos: 0/0")
+        self.lbl_contratos.setObjectName("CardTitle")
+        self.lbl_promedio = QLabel("Promedio por consulta: calculando…")
+        self.lbl_promedio.setObjectName("PageSubtitle")
+        fila.addWidget(self.lbl_contratos)
+        fila.addStretch(1)
+        fila.addWidget(self.lbl_promedio)
+        self.barra_contratos = QProgressBar()
+        self.barra_contratos.setRange(0, 100)
+        self.barra_contratos.setValue(0)
+        self.barra_contratos.setTextVisible(False)
+        progreso_layout.addLayout(fila)
+        progreso_layout.addWidget(self.barra_contratos)
+        layout.addWidget(progreso)
+
         self.action_bar = ActionBar()
         layout.addWidget(self.action_bar)
 
@@ -56,7 +76,7 @@ class DashboardPage(QWidget):
         self.titulo = QLabel("Panel de ejecución")
         self.titulo.setObjectName("PageTitle")
         subtitulo = QLabel(
-            "Carga los reportes y ejecuta la conciliación y verificación de contratos."
+            "Carga el Excel de contratos y ejecuta las verificaciones automáticamente."
         )
         subtitulo.setObjectName("PageSubtitle")
         columna.addWidget(self.titulo)
@@ -98,3 +118,12 @@ class DashboardPage(QWidget):
         self.sources_head.set_hint(f"0 de {len(ETAPAS)} completadas")
         self.status_chip.set_estado("pending")
         self.status_chip.set_texto("En espera")
+        self.set_progreso_contratos(0, 0, "Promedio por consulta: calculando…")
+
+    def set_progreso_contratos(self, hechos: int, total: int, promedio: str = "") -> None:
+        total = max(int(total), 0)
+        hechos = max(0, min(int(hechos), total)) if total else 0
+        self.lbl_contratos.setText(f"Contratos verificados: {hechos}/{total}")
+        self.barra_contratos.setValue(int(hechos * 100 / total) if total else 0)
+        if promedio:
+            self.lbl_promedio.setText(promedio)

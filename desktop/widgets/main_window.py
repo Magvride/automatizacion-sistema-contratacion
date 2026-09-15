@@ -24,12 +24,12 @@ from PyQt6.QtWidgets import (
 from desktop.core.documentos import documentos
 from desktop.core.logging_bridge import LogBridge, instalar_handler
 from desktop.core.pipeline import ETAPAS
-from desktop.core.worker import OneDriveWorker, PipelineWorker
+from desktop.core.worker import PipelineWorker
 from desktop.paths import BASE_DIR, icono_app
 from desktop.updater_client import UpdateCheckWorker, launch_update
 from desktop import __version__
 from desktop.widgets.dashboard_page import DashboardPage
-from desktop.widgets.pages import ConfigPage, SourcesPage
+from desktop.widgets.pages import SourcesPage
 from desktop.widgets.results_page import ResultsPage
 from desktop.widgets.sidebar import Sidebar
 from desktop.widgets.status_bar import StatusBar
@@ -59,7 +59,6 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(980, 640)
 
         self.worker: PipelineWorker | None = None
-        self.worker_onedrive: OneDriveWorker | None = None
         self._historial: list[tuple[str, str, str]] = []
         self._inicio_global = 0.0
         self._inicio_etapa = 0.0
@@ -76,7 +75,6 @@ class MainWindow(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._tick)
 
-        self._actualizar_destino()
         self._on_log("INFO", "Aplicación iniciada.")
 
     # ------------------------------------------------------------------
@@ -108,13 +106,10 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardPage()
         self.pagina_resultados = ResultsPage()
         self.pagina_fuentes = SourcesPage()
-        self.pagina_config = ConfigPage()
-        self.pagina_config.actualizado.connect(lambda msg: self._on_log("INFO", msg))
         for pagina in (
             self.dashboard,
             self.pagina_resultados,
             self.pagina_fuentes,
-            self.pagina_config,
         ):
             pagina.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             self.stack.addWidget(self._envolver_scroll(pagina))
@@ -141,11 +136,8 @@ class MainWindow(QMainWindow):
         barra = self.dashboard.action_bar
         barra.btn_iniciar.clicked.connect(self._iniciar)
         barra.btn_detener.clicked.connect(self._detener)
-        barra.btn_continuar.clicked.connect(self._continuar)
-        barra.btn_onedrive.clicked.connect(self._subir_onedrive)
         self.dashboard.activity_log.descargar.connect(self._descargar_log)
         self.dashboard.documents_card.cambio.connect(self._actualizar_estado_entradas)
-        self.dashboard.action_bar.chk_demo.toggled.connect(self._actualizar_estado_entradas)
         self._actualizar_estado_entradas()
 
     # ------------------------------------------------------------------
@@ -155,8 +147,6 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(indice)
         if indice == 1:
             self.pagina_resultados.refrescar()
-        elif indice == 3:
-            self.pagina_config.refrescar()
 
     # ------------------------------------------------------------------
     # Registro / estado
@@ -223,15 +213,6 @@ class MainWindow(QMainWindow):
         self.title_bar.btn_actualizar.setEnabled(True)
         self._update_worker = None
 
-    def _actualizar_destino(self) -> None:
-        try:
-            from config import ruta_onedrive_destino
-
-            destino = str(ruta_onedrive_destino())
-        except Exception:  # noqa: BLE001
-            destino = "OneDrive"
-        self.status_bar.set_destino(f"OneDrive · {destino}")
-
     def _tick(self) -> None:
         if self._inicio_global:
             self.status_bar.set_tiempo(_formatear_duracion(time.monotonic() - self._inicio_global))
@@ -245,30 +226,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _faltantes(self) -> list:
         """Nombres de los documentos que aún no están seleccionados o no existen."""
-        if self.dashboard.action_bar.en_demo():
-            return []
         seleccion = self.dashboard.documents_card.rutas()
         faltantes = []
         for documento in documentos():
             ruta = seleccion.get(documento.id, "")
             if not ruta or not os.path.isfile(ruta):
                 faltantes.append(documento.nombre)
-        try:
-            from config import ruta_matriz_manual
-
-            if not ruta_matriz_manual().is_file():
-                faltantes.append("Matriz de seguimiento")
-        except Exception:  # noqa: BLE001
-            faltantes.append("Matriz de seguimiento")
         return faltantes
 
     def _actualizar_estado_entradas(self) -> None:
-        self.dashboard.documents_card.refrescar_matriz()
         if self.worker is not None and self.worker.isRunning():
-            return
-        if self.dashboard.action_bar.en_demo():
-            self.dashboard.status_chip.set_estado("pending")
-            self.dashboard.status_chip.set_texto("Modo demo activo")
             return
         faltantes = self._faltantes()
         if not faltantes:
@@ -307,11 +274,11 @@ class MainWindow(QMainWindow):
 
         self.worker = PipelineWorker(
             self.dashboard.documents_card.rutas(),
-            demo=self.dashboard.action_bar.en_demo(),
+            demo=False,
         )
         self.worker.etapa_actualizada.connect(self._on_etapa)
         self.worker.progreso_global.connect(self._on_progreso)
-        self.worker.pausa_requerida.connect(self._on_pausa)
+        self.worker.progreso_contrato.connect(self._on_progreso_contrato)
         self.worker.finalizado.connect(self._on_finalizado)
         self.worker.finished.connect(self._worker_terminado)
         self.worker.start()
@@ -348,10 +315,12 @@ class MainWindow(QMainWindow):
         self.status_bar.set_progreso(completadas, total)
         self.dashboard.sources_head.set_hint(f"{completadas} de {total} completadas")
 
-    def _on_pausa(self, prompt: str) -> None:
-        self._on_log("WARNING", f"Confirmación requerida: {prompt.strip() or 'pulsa Continuar'}")
-        self.dashboard.status_chip.set_estado("running")
-        self.dashboard.status_chip.set_texto("Esperando confirmación")
+    def _on_progreso_contrato(self, hechos: int, total: int, detalle: str) -> None:
+        transcurrido = time.monotonic() - self._inicio_global if self._inicio_global else 0
+        promedio = transcurrido / hechos if hechos else 0
+        texto = f"Promedio por consulta: {promedio:.1f} s" if hechos else "Promedio por consulta: calculando…"
+        self.dashboard.set_progreso_contratos(hechos, total, texto)
+        self._on_log("INFO", detalle)
 
     def _on_finalizado(self, exito: bool, mensaje: str) -> None:
         self.timer.stop()
@@ -373,31 +342,6 @@ class MainWindow(QMainWindow):
             self.worker.requestInterruption()
             self.worker.continuar("")
             self._on_log("WARNING", "Detención solicitada por el usuario…")
-
-    def _continuar(self) -> None:
-        if self.worker is not None and self.worker.isRunning():
-            self.worker.continuar("")
-            self._on_log("INFO", "Confirmación enviada al proceso.")
-
-    # ------------------------------------------------------------------
-    # OneDrive
-    # ------------------------------------------------------------------
-    def _subir_onedrive(self) -> None:
-        if self.worker_onedrive is not None and self.worker_onedrive.isRunning():
-            return
-        self.dashboard.action_bar.btn_onedrive.setEnabled(False)
-        self._on_log("INFO", "Copiando la matriz actualizada a OneDrive…")
-        self.worker_onedrive = OneDriveWorker()
-        self.worker_onedrive.finalizado.connect(self._on_onedrive)
-        self.worker_onedrive.finished.connect(self._worker_onedrive_terminado)
-        self.worker_onedrive.start()
-
-    def _on_onedrive(self, exito: bool, mensaje: str) -> None:
-        self.dashboard.action_bar.btn_onedrive.setEnabled(True)
-        self._on_log("INFO" if exito else "ERROR", mensaje)
-
-    def _worker_onedrive_terminado(self) -> None:
-        self.worker_onedrive = None
 
     # ------------------------------------------------------------------
     # Registro completo
@@ -422,7 +366,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def closeEvent(self, event):  # noqa: N802, D102
-        for hilo in (self.worker, self.worker_onedrive):
+        for hilo in (self.worker,):
             if hilo is not None and hilo.isRunning():
                 hilo.requestInterruption()
                 if hasattr(hilo, "continuar"):

@@ -22,8 +22,8 @@ logger = configurar_logger("notificacion")
 ASUNTO_POR_DEFECTO = "Expedientes pendientes de cargar en el repositorio (Alfresco)"
 PLANTILLA_POR_DEFECTO = (
     "Cordial saludo, {ordenador}.\n\n"
-    "Le informamos que los siguientes contratos a su cargo no tienen carpeta en "
-    "el repositorio documental (Alfresco) o no fue posible localizarla:\n\n"
+    "Le informamos que los siguientes contratos a su cargo tienen pendientes en "
+    "el repositorio documental (Alfresco):\n\n"
     "{contratos}\n\n"
     "Le solicitamos gestionar la creación o el cargue del expediente.\n\n"
     "División de Contratación\nUniversidad Industrial de Santander"
@@ -47,17 +47,18 @@ def correo_valido(valor) -> str:
     return ""
 
 
-def _sin_carpeta(resultados) -> list:
+def _pendientes(resultados) -> list:
     return [
         r for r in (resultados or [])
         if str(r.get("estado_alfresco", "")).upper() != "ENCONTRADA"
+        or str(r.get("faltantes", "0")).strip() not in ("", "0")
     ]
 
 
 def destinatarios(resultados) -> list:
     """Agrupa por correo del ordenador los contratos sin carpeta con correo."""
     grupos = {}
-    for resultado in _sin_carpeta(resultados):
+    for resultado in _pendientes(resultados):
         correo = correo_valido(resultado.get("correo_ordenador", ""))
         if not correo:
             continue
@@ -65,13 +66,15 @@ def destinatarios(resultados) -> list:
         grupo = grupos.setdefault(correo, {"correo": correo, "ordenador": ordenador, "contratos": []})
         if not grupo["ordenador"] and ordenador:
             grupo["ordenador"] = ordenador
-        grupo["contratos"].append(str(resultado.get("contrato", "")))
+        faltantes = str(resultado.get("listado_faltantes", "")).strip()
+        contrato = str(resultado.get("contrato", ""))
+        grupo["contratos"].append(f"{contrato} ({faltantes})" if faltantes else contrato)
     return [grupos[clave] for clave in sorted(grupos)]
 
 
 def resumen(resultados) -> dict:
     """Cuenta cuántos contratos sin carpeta tienen y no tienen correo."""
-    sin = _sin_carpeta(resultados)
+    sin = _pendientes(resultados)
     con_correo = sum(1 for r in sin if correo_valido(r.get("correo_ordenador", "")))
     return {
         "sin_carpeta": len(sin),
@@ -128,6 +131,8 @@ def resultados_desde_excel(ruta: str) -> list:
                 "estado_alfresco": "ENCONTRADA" if encontrada else "NO SE EVIDENCIA",
                 "correo_ordenador": valor(fila, "CORREO ORDENADOR"),
                 "ordenador": valor(fila, "SUPERVISOR / DESTINATARIO"),
+                "faltantes": valor(fila, "DOCS FALTANTES"),
+                "listado_faltantes": valor(fila, "LISTADO DE FALTANTES"),
             }
         )
     return resultados
