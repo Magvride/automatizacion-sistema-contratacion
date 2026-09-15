@@ -64,7 +64,7 @@ def test_enviar_con_autorizacion_envia():
     resumen = notificacion.enviar(
         _resultados(),
         autorizado=True,
-        smtp={"user": "u", "from": "f@uis.edu.co"},
+        smtp={"user": "u", "pass": "p", "from": "f@uis.edu.co"},
         enviar_fn=spy,
     )
 
@@ -78,6 +78,18 @@ def test_enviar_sin_smtp_configurado():
     assert resumen["autorizado"] is True
     assert resumen["enviados"] == 0
     assert "SMTP" in resumen["detalle"]
+
+
+def test_enviar_reporta_fallidos():
+    resumen = notificacion.enviar(
+        _resultados(),
+        autorizado=True,
+        smtp={"user": "u", "pass": "p", "from": "f@uis.edu.co"},
+        enviar_fn=lambda *_: False,
+    )
+    assert resumen["enviados"] == 0
+    assert resumen["fallidos"] == 1
+    assert "Fallidos: 1" in resumen["detalle"]
 
 
 def test_resultados_desde_excel(tmp_path):

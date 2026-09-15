@@ -10,6 +10,7 @@ Entregables (en ``carpeta_salida``):
     07_Expedientes_Faltantes.csv     solo los no encontrados
     Auditoria_Contratos.xlsx         informe Excel (resumen, etapas, diagnóstico)
     10_Correos_Auditoria.txt         borradores de correo
+    10_Correos_Auditoria.xlsx        correos en tabla para Power Automate
     Informe_Auditoria_Contrato.html  informe visual: qué tiene y qué le falta
 """
 
@@ -33,6 +34,7 @@ SALIDAS = {
     "faltantes": "07_Expedientes_Faltantes.csv",
     "auditoria": "Auditoria_Contratos.xlsx",
     "correos": "10_Correos_Auditoria.txt",
+    "correos_excel": "10_Correos_Auditoria.xlsx",
     "informe": "Informe_Auditoria_Contrato.html",
 }
 
@@ -77,12 +79,14 @@ def ejecutar_servicio(
     )
 
     ruta_correos = os.path.join(carpeta_salida, SALIDAS["correos"])
+    ruta_correos_excel = os.path.join(carpeta_salida, SALIDAS["correos_excel"])
     generar_borradores(
         resultados,
         ruta_correos,
         ruta_diccionario=ruta_diccionario,
         fecha_revision=fecha_revision,
         fecha_limite=fecha_limite,
+        ruta_excel=ruta_correos_excel,
     )
 
     ruta_informe = os.path.join(carpeta_salida, SALIDAS["informe"])
@@ -96,6 +100,7 @@ def ejecutar_servicio(
     return {
         **resumen,
         "ruta_correos": ruta_correos,
+        "ruta_correos_excel": ruta_correos_excel,
         "ruta_informe": ruta_informe,
         "resultados": resultados,
     }

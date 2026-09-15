@@ -25,7 +25,11 @@ from config import INTERNO_DIR, REPORTES_DIR, RESULTADOS_DIR
 logger = configurar_logger("limpieza")
 
 # Entregables que se conservan en la carpeta de resultados.
-ENTREGABLES = {"Auditoria_Contratos.xlsx", "Informe_Auditoria_Contrato.html"}
+ENTREGABLES = {
+    "Auditoria_Contratos.xlsx",
+    "Informe_Auditoria_Contrato.html",
+    "10_Correos_Auditoria.xlsx",
+}
 
 # (carpeta_relativa, patrón_glob, mantener, descripción)
 REGLAS = [

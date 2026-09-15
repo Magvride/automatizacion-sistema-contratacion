@@ -187,7 +187,11 @@ class EtlPipeline:
         ruta_correos = salidas.get("correos_auditoria") or os.path.join(
             interno, "10_Correos_Auditoria.txt"
         )
-        generar_borradores(resultados, ruta_correos)
+        generar_borradores(
+            resultados,
+            ruta_correos,
+            ruta_excel=salidas.get("correos_excel", ""),
+        )
 
         ruta_informe = salidas.get("informe") or os.path.join(
             salidas["carpeta"], "Informe_Auditoria_Contrato.html"

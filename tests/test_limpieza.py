@@ -13,6 +13,7 @@ def test_limpiar_salidas_conserva_entregables(tmp_path, monkeypatch):
     resultados = tmp_path / "resultados"
     resultados.mkdir()
     (resultados / "Auditoria_Contratos.xlsx").write_bytes(b"x")
+    (resultados / "10_Correos_Auditoria.xlsx").write_bytes(b"x")
     (resultados / "Informe_Auditoria_Contrato.html").write_text("x", encoding="utf-8")
     (resultados / "viejo_sobrante.csv").write_text("x", encoding="utf-8")
 
@@ -23,5 +24,9 @@ def test_limpiar_salidas_conserva_entregables(tmp_path, monkeypatch):
 
     assert list(interno.iterdir()) == []
     nombres = {p.name for p in resultados.iterdir()}
-    assert nombres == {"Auditoria_Contratos.xlsx", "Informe_Auditoria_Contrato.html"}
+    assert nombres == {
+        "Auditoria_Contratos.xlsx",
+        "Informe_Auditoria_Contrato.html",
+        "10_Correos_Auditoria.xlsx",
+    }
     assert resumen["eliminados"] == 3

@@ -232,20 +232,25 @@ def enviar(
         return {"autorizado": True, "total": 0, "enviados": 0, "detalle": "No hay correos por enviar."}
 
     smtp = smtp or _smtp_config()
-    if not smtp.get("user") or not smtp.get("from"):
+    if not smtp.get("user") or not smtp.get("from") or not smtp.get("pass"):
         return {
             "autorizado": True,
             "total": len(mensajes),
             "enviados": 0,
-            "detalle": "Faltan SMTP_USER/SMTP_FROM en .env para enviar.",
+            "detalle": "Faltan SMTP_USER, SMTP_PASS o SMTP_FROM en .env para enviar.",
         }
 
     enviar_fn = enviar_fn or _enviar_smtp
     enviados = sum(1 for mensaje in mensajes if enviar_fn(smtp, mensaje))
+    fallidos = len(mensajes) - enviados
     logger.info("Enviados %d/%d correos.", enviados, len(mensajes))
     return {
         "autorizado": True,
         "total": len(mensajes),
         "enviados": enviados,
-        "detalle": f"Enviados {enviados}/{len(mensajes)}.",
+        "fallidos": fallidos,
+        "detalle": (
+            f"Enviados {enviados}/{len(mensajes)}."
+            + (f" Fallidos: {fallidos}. Revise el registro de errores." if fallidos else "")
+        ),
     }
