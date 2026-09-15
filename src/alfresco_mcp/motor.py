@@ -93,6 +93,12 @@ def _procesar(fila, gateway, diccionario, contratistas, max_archivos):
     contratista = contratistas.get(codigo, fila.get("contratista", ""))
     clase = clase_de_contrato(codigo, contratista)
     obligatorios = obligatorios_por_clase(diccionario, clase)
+    if not obligatorios:
+        logger.warning(
+            "El contrato '%s' tiene clase '%s', pero esa clase no está configurada en el diccionario.",
+            codigo,
+            clase,
+        )
 
     try:
         resultado = verificar_contrato(
@@ -112,6 +118,11 @@ def _procesar(fila, gateway, diccionario, contratistas, max_archivos):
         )
 
     resultado["cod"] = clase
+    if not obligatorios:
+        resultado["observacion"] = (
+            f"La clase {clase} no tiene documentos obligatorios configurados en el diccionario. "
+            "Revisar la configuración antes de concluir la auditoría."
+        )
     return _enriquecer(resultado, fila)
 
 

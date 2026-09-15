@@ -73,6 +73,59 @@ COLUMNAS_BASE = ["contrato", "centro_costo", "ordenador"]
 ORIGEN_NUEVAS_VERSIONES = "NUEVAS VERSIONES"
 
 
+def construir_consolidado_desde_excel(
+    ruta_excel: str,
+    ruta_salida: str,
+    correos: dict = None,
+) -> dict:
+    """Construye el consolidado directamente desde el Excel cargado por el usuario."""
+    from nuevas_versiones import leer_nuevas_versiones
+
+    datos = leer_nuevas_versiones(ruta_excel)
+    if not datos:
+        return {"ruta": "", "total": 0, "con_correo": 0, "encontrado": False}
+
+    filas = []
+    vistos = set()
+    for numero, registro in datos.items():
+        contrato = str(registro.get("contrato", "")).strip() or str(numero).strip()
+        if contrato in vistos:
+            continue
+        vistos.add(contrato)
+        filas.append({"contrato": contrato, **registro})
+    base = pd.DataFrame(filas)
+    for col in COLUMNAS_BASE:
+        if col not in base.columns:
+            base[col] = ""
+    if correos is None:
+        correos = cargar_correos_ordenadores()
+    base["correo_ordenador"] = base.get("correo_ordenador", "")
+    if correos:
+        mapeados = base["ordenador"].map(
+            lambda nombre: correos.get(normalizar_nombre(nombre), "")
+        )
+        base.loc[mapeados != "", "correo_ordenador"] = mapeados[mapeados != ""]
+
+    for campo in CAMPOS_NUEVAS_VERSIONES:
+        if campo not in base.columns:
+            base[campo] = ""
+    base["origen"] = ORIGEN_NUEVAS_VERSIONES
+    base["uisard"] = ""
+    for col in ("NOMBRE EXPEDIENTE", "UAA", "SERIE", "SUBSERIE", "alfresco", "cantidad_archivos"):
+        base[col] = ""
+
+    consolidado = _normalizar(base[COLUMNAS_CONSOLIDADO])
+    os.makedirs(os.path.dirname(ruta_salida) or ".", exist_ok=True)
+    consolidado.to_csv(ruta_salida, index=False, encoding="utf-8-sig")
+    con_correo = int((consolidado["correo_ordenador"] != "").sum())
+    return {
+        "ruta": ruta_salida,
+        "total": len(consolidado),
+        "con_correo": con_correo,
+        "encontrado": True,
+    }
+
+
 def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     """Convierte todo a texto y reemplaza NaNs por "" para facilitar el manejo."""
     if df is None or df.empty:

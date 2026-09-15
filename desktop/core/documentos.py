@@ -1,16 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Documentos de entrada que el usuario carga manualmente.
-
-Reemplaza la extracción automática (login a "nuevas versiones" y scraping de
-UISARD): el usuario selecciona 2 archivos Excel y aquí se copian a las carpetas
-que el pipeline ya consume.
-
-* **Nuevas versiones** → ``archivos/01_Contratos_Descargados/contratos_*.xlsx``
-  (lo usa ``seguimiento_p2``). Si se selecciona un ``.xls``, se convierte a
-  ``.xlsx`` automáticamente al preparar las entradas.
-* **Diccionario de documentos** → ``archivos/00_Datos_Raw/Diccionario_Documentos.xlsx``
-  (lo usa la auditoría documental en la etapa Alfresco).
-"""
+"""Documento Excel que el usuario carga como entrada del flujo."""
 
 import logging
 import os
@@ -58,15 +47,6 @@ def documentos() -> tuple[DocumentoEntrada, ...]:
                 "contratos_{fecha}{ext}",
                 "contratos_*",
                 (".xlsx", ".xls"),
-            ),
-            DocumentoEntrada(
-                "diccionario",
-                "Diccionario de documentos",
-                "Documentos obligatorios por clase (hojas Diccionario y Matriz_Etapas)",
-                MATRIZ_MANUAL_DIR,
-                "Diccionario_Documentos.xlsx",
-                "Diccionario_Documentos.xlsx",
-                (".xlsx",),
             ),
         )
     return _DOCUMENTOS

@@ -147,50 +147,14 @@ class DocumentsCard(Card):
             cuerpo_layout.addWidget(fila)
             self._filas[documento.id] = fila
 
-        cuerpo_layout.addWidget(_separador())
-
-        # --- Matriz de seguimiento (se conserva entre ejecuciones) ---
-        matriz = QWidget()
-        fila_matriz = QHBoxLayout(matriz)
-        fila_matriz.setContentsMargins(0, 8, 0, 8)
-        fila_matriz.setSpacing(10)
-
-        icono = QLabel()
-        icono.setFixedSize(26, 26)
-        icono.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icono.setPixmap(icons.svg_pixmap(icons.DATABASE, 14, theme.ACCENT))
-        icono.setStyleSheet(f"background:{theme.ACCENT_SOFT}; border-radius:7px;")
-
-        textos = QWidget()
-        columna = QVBoxLayout(textos)
-        columna.setContentsMargins(0, 0, 0, 0)
-        columna.setSpacing(1)
-        lbl_nombre = QLabel("Matriz de seguimiento")
-        lbl_nombre.setObjectName("DocName")
-        self.lbl_matriz = QLabel("—")
-        self.lbl_matriz.setObjectName("DocPath")
-        columna.addWidget(lbl_nombre)
-        columna.addWidget(self.lbl_matriz)
-
-        btn_matriz = QPushButton("Cambiar…")
-        btn_matriz.setObjectName("SmallButton")
-        btn_matriz.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_matriz.clicked.connect(self._elegir_matriz)
-
-        fila_matriz.addWidget(icono)
-        fila_matriz.addWidget(textos, 1)
-        fila_matriz.addWidget(btn_matriz)
-        cuerpo_layout.addWidget(matriz)
-
         nota = QLabel(
-            "Al iniciar el proceso, los archivos se copian a las carpetas de trabajo."
+            "El diccionario de contratos y la tabla de ordenadores se cargan automáticamente."
         )
         nota.setObjectName("DocNote")
         nota.setWordWrap(True)
         cuerpo_layout.addWidget(nota)
 
         layout.addWidget(cuerpo)
-        self.refrescar_matriz()
 
     # ------------------------------------------------------------------
     def rutas(self) -> dict:
@@ -200,35 +164,3 @@ class DocumentsCard(Card):
         fila = self._filas.get(doc_id)
         if fila:
             fila.set_ruta(ruta)
-
-    def refrescar_matriz(self) -> None:
-        try:
-            from config import ruta_matriz_manual
-
-            ruta = ruta_matriz_manual()
-            existe = ruta.is_file()
-            self.lbl_matriz.setText(ruta.name if existe else f"{ruta} (no encontrada)")
-            self.lbl_matriz.setToolTip(str(ruta))
-            self.lbl_matriz.setObjectName("DocPathOk" if existe else "DocPath")
-        except Exception as exc:  # noqa: BLE001
-            self.lbl_matriz.setText(f"No disponible ({exc})")
-        self.lbl_matriz.style().unpolish(self.lbl_matriz)
-        self.lbl_matriz.style().polish(self.lbl_matriz)
-
-    def _elegir_matriz(self) -> None:
-        try:
-            from config import configurar_rutas, ruta_matriz_manual, ruta_ordenadores
-
-            ruta, _ = QFileDialog.getOpenFileName(
-                self,
-                "Selecciona la matriz manual",
-                str(ruta_matriz_manual().parent),
-                "Excel (*.xlsx)",
-            )
-            if not ruta:
-                return
-            configurar_rutas(matriz_manual=ruta, ordenadores=str(ruta_ordenadores()))
-            self.refrescar_matriz()
-            self.cambio.emit()
-        except Exception as exc:  # noqa: BLE001
-            self.lbl_matriz.setText(f"Error al configurar: {exc}")

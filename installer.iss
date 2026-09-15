@@ -10,7 +10,7 @@
 
 #define MyAppName "Sistema Automatizado de Contrataciones"
 #ifndef MyAppVersion
-#define MyAppVersion "0.6.0"
+#define MyAppVersion "1.0.0"
 #endif
 #define MyAppPublisher "Universidad Industrial de Santander"
 #define MyAppExeName "SistemaContrataciones.exe"

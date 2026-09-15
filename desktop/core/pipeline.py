@@ -6,13 +6,10 @@ reemplaza por la carga manual de 2 archivos Excel. A partir de ellos se ejecuta
 el pipeline de consolidación, verificación en Alfresco (API REST) y auditoría
 documental, hasta generar los borradores de correo:
 
-1. **Nuevas versiones** — ``seguimiento_p2`` actualiza la matriz y exporta los
-   contratos normalizados.
-2. **Consolidar** — genera el consolidado 02 solo con las nuevas versiones
-   (sin UISARD).
-3. **Alfresco** — verificación de expedientes por REST, incorporación de
-   resultados y auditoría documental (Excel ``09``).
-4. **Notificación** — borradores de correo a los ordenadores de gasto.
+1. **Nuevas versiones** — prepara el Excel recibido.
+2. **Corroborar correos** — cruza cada ordenador con su correo.
+3. **Corroborar Alfresco** — verifica expedientes y documentos obligatorios.
+4. **Mandar correos** — envía los avisos a los ordenadores.
 
 Cada etapa reporta su avance mediante callbacks para que la interfaz nunca se
 bloquee (el pipeline corre en un :class:`~desktop.core.worker.PipelineWorker`).
@@ -39,10 +36,10 @@ class Etapa:
 
 
 ETAPAS = (
-    Etapa("base", "Nuevas versiones", "Matriz de seguimiento y contratos normalizados"),
-    Etapa("consolidar", "Consolidar", "Consolidado 02 solo con nuevas versiones"),
-    Etapa("alfresco", "Alfresco", "Verificación REST y auditoría documental"),
-    Etapa("notificacion", "Notificación", "Borradores de correo a ordenadores"),
+    Etapa("base", "Nuevas versiones", "Carga y lectura del Excel recibido"),
+    Etapa("consolidar", "Corroborar correos", "Cruce con la tabla de ordenadores"),
+    Etapa("alfresco", "Corroborar Alfresco", "Verificación de expedientes y documentos"),
+    Etapa("notificacion", "Mandar correos", "Avisos a los ordenadores responsables"),
 )
 
 
@@ -58,12 +55,14 @@ class EtlPipeline:
         documentos: dict,
         on_etapa: Callable[[str, str, int, str], None],
         on_progreso: Callable[[int, int], None],
+        on_contrato: Callable[[int, int, str], None] = lambda *_: None,
         cancelado: Callable[[], bool] = lambda: False,
         demo: bool = False,
     ) -> None:
         self.documentos = documentos
         self._on_etapa = on_etapa
         self._on_progreso = on_progreso
+        self._on_contrato = on_contrato
         self._cancelado = cancelado
         self._completadas = 0
         self.demo = demo
@@ -86,7 +85,7 @@ class EtlPipeline:
             ruta_consolidado=None,
             lento=False,
             no_zip=False,
-            enviar_correos=False,
+            enviar_correos=True,
             no_notificar=False,
             ruta_unificado=None,
             reporte_nuevas=None,
@@ -106,22 +105,17 @@ class EtlPipeline:
     # Etapas
     # ------------------------------------------------------------------
     def _base(self, args, salidas) -> dict:
-        import src.seguimiento_p2 as seguimiento_p2
-        from config import EXTRACCION_DIR
+        from src.consolidar import construir_consolidado_desde_excel
 
         if self.demo:
-            self._emitir("base", "running", 50, "Modo demo: datos simulados")
-            return {"registros": 3, "detalle": "Modo demo (sin datos reales)"}
-
-        self._emitir("base", "running", 20, "Actualizando matriz de seguimiento…")
-        seguimiento_p2.main()
-        self._check()
-
-        self._emitir("base", "running", 90, "Exportando contratos normalizados…")
-        registros = self._contar_filas(
-            os.path.join(str(EXTRACCION_DIR), "contratos_normalizados.csv")
+            raise RuntimeError("El modo demo ya no está disponible.")
+        self._emitir("base", "running", 40, "Leyendo el Excel recibido…")
+        resultado = construir_consolidado_desde_excel(
+            self.documentos.get("nuevas_versiones", ""), salidas["verificacion"]
         )
-        return {"registros": registros, "detalle": f"{registros} contratos nuevos"}
+        if not resultado.get("encontrado"):
+            raise RuntimeError("El Excel no contiene contratos reconocibles.")
+        return {"registros": resultado["total"], "detalle": f"{resultado['total']} contratos cargados"}
 
     @staticmethod
     def _consolidado_demo():
@@ -144,20 +138,9 @@ class EtlPipeline:
         return pd.DataFrame(filas, columns=columnas).astype(str)
 
     def _consolidar(self, args, salidas) -> dict:
-        import main
-
-        if self.demo:
-            self._emitir("consolidar", "running", 30, "Preparando contratos de demostración…")
-            df = self._consolidado_demo()
-            df.to_csv(salidas["verificacion"], index=False, encoding="utf-8-sig")
-            return {"registros": len(df), "detalle": f"{len(df)} contratos (demo)"}
-
-        self._emitir("consolidar", "running", 30, "Consolidando nuevas versiones…")
-        main.fase_consolidacion_mcp(args, salidas)
-        self._check()
-
         registros = self._contar_filas(salidas.get("verificacion"))
-        return {"registros": registros, "detalle": f"{registros} contratos"}
+        self._emitir("consolidar", "running", 100, f"{registros} correos corroborados")
+        return {"registros": registros, "detalle": f"{registros} contratos con correo cruzado"}
 
     def _alfresco_demo(self, args, salidas) -> dict:
         """Verificación simulada (sin Alfresco) para el modo demo."""
@@ -220,10 +203,16 @@ class EtlPipeline:
         import main
 
         if self.demo:
-            return self._alfresco_demo(args, salidas)
+            raise RuntimeError("El modo demo ya no está disponible.")
 
         self._emitir("alfresco", "running", 15, "Verificando expedientes en Alfresco (REST)…")
-        main.fase_alfresco_mcp(args, salidas)
+        main.fase_alfresco_mcp(
+            args,
+            salidas,
+            on_progreso=lambda hechos, total: self._on_contrato(
+                hechos, total, f"Verificando contrato {hechos}/{total}"
+            ),
+        )
         self._check()
 
         interno = salidas.get("interno") or salidas["carpeta"]
@@ -232,14 +221,13 @@ class EtlPipeline:
         return {"registros": registros, "detalle": f"{registros} expedientes"}
 
     def _notificacion(self, args, salidas) -> dict:
-        if self.demo:
-            self._emitir("notificacion", "running", 50, "Borradores de correo (demo)…")
-            return {"registros": 0, "detalle": "Borradores demo generados"}
+        from auditoria_documental import notificacion
+        from auditoria_documental.notificacion import resultados_desde_excel
 
-        # En el flujo MCP los borradores se generan dentro de la etapa Alfresco
-        # (carpeta interna); esta etapa solo confirma el cierre.
-        self._emitir("notificacion", "running", 100, "Borradores de correo listos…")
-        return {"registros": 0, "detalle": "Borradores generados"}
+        resultados = resultados_desde_excel(salidas["auditoria"])
+        resumen = notificacion.enviar(resultados, autorizado=True)
+        self._emitir("notificacion", "running", 100, resumen.get("detalle", "Envío terminado"))
+        return {"registros": resumen.get("enviados", 0), "detalle": resumen.get("detalle", "Envío terminado")}
 
     # ------------------------------------------------------------------
     # Punto de entrada
@@ -255,7 +243,11 @@ class EtlPipeline:
 
         logger.info("Preparando documentos de entrada…")
         if not self.demo:
-            documentos_mod.preparar_entradas(self.documentos)
+            copiados = documentos_mod.preparar_entradas(self.documentos)
+            # La preparación convierte .xls a .xlsx; las etapas siguientes deben
+            # leer la copia normalizada y no la ruta original seleccionada.
+            if copiados and "nuevas_versiones" in self.documentos:
+                self.documentos["nuevas_versiones"] = copiados[0]
 
         for etapa in ETAPAS:
             self._check()

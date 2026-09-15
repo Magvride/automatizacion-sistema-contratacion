@@ -58,12 +58,12 @@ _BORDE = Border(
 # Encabezados del resumen y sus anchos.
 CABECERAS_RESUMEN = [
     "#", "CÓDIGO CONTRATO", "CÓD", "TIPO", "CONTRATISTA", "CENTRO DE COSTO",
-    "ORDENADOR", "VALOR", "FECHA INICIO", "FECHA FIN", "REQ", "REP", "%",
+    "ORDENADOR", "CORREO ORDENADOR", "VALOR", "FECHA INICIO", "FECHA FIN", "REQ", "REP", "%",
     "FALTAN", "ESTADO ALFRESCO", "CARPETA", "ESPERADOS", "ENCONTRADOS",
     "FALTANTES", "% CUMPL DIC", "VÍNCULO CARPETA", "VÍNCULO HOJA",
 ]
 ANCHOS_RESUMEN = [
-    4, 16, 6, 14, 30, 30, 26, 14, 12, 11, 6, 6, 6, 7, 16, 22, 11, 12, 11, 9, 30, 16,
+    4, 16, 6, 14, 30, 30, 26, 30, 14, 12, 11, 6, 6, 6, 7, 16, 22, 11, 12, 11, 9, 30, 16,
 ]
 
 CABECERAS_GRANULAR = [
@@ -78,17 +78,51 @@ CABECERAS_DIAGNOSTICO = [
     "CONTRATO", "CLASE", "CONTRATISTA", "VALOR", "FECHA INICIO", "FECHA FIN",
     "TIPO", "UNIDAD", "ESTADO CONTRATO",
     "ENLACE CARPETA ALFRESCO", "CARPETA ENCONTRADA", "DESCARGADA",
-    "COINCIDE CON MATRIZ DE SEGUIMIENTO", "Nº PAGOS",
+    "Nº PAGOS",
     "DOCS REQUERIDOS", "DOCS HALLADOS", "DOCS FALTANTES", "LISTADO DE FALTANTES",
-    "% COMPLETITUD", "ESTADO", "DOCUMENTACIÓN COPIADA",
+    "% COMPLETITUD", "ESTADO",
     "SUPERVISOR / DESTINATARIO", "CORREO ORDENADOR",
     "OBSERVACIÓN (PARA EL CORREO)", "FECHA REVISIÓN",
+    "FASE DEL CONTRATO", "EXPLICACIÓN DE LA FASE", "ARCHIVOS FALTANTES",
+    "DESCRIPCIÓN Y ALERTAS",
 ]
 ANCHOS_DIAGNOSTICO = [
     16, 8, 30, 15, 12, 12, 20, 34, 16,
-    46, 16, 12, 26, 10,
-    14, 12, 12, 46, 12, 14, 16, 26, 30, 50, 14,
+    46, 16, 10, 10,
+    14, 12, 12, 46, 12, 14, 26, 30, 50, 14, 30, 48, 28, 100,
 ]
+
+def _resumen_fase(contrato: dict) -> tuple[str, str]:
+    if not contrato.get("node_id"):
+        return "No evaluado", "No hay carpeta localizada en Alfresco; no es posible evaluar la fase."
+    etapas = contrato.get("etapas") or {}
+    if not etapas:
+        return "Clase no configurada", "El diccionario no tiene documentos obligatorios para esta clase de contrato."
+    pendientes = [(etapa, valores) for etapa, valores in etapas.items() if valores[0] < valores[1]]
+    if not pendientes:
+        return "Completo", "Todos los documentos obligatorios del diccionario están presentes."
+    etapa, valores = pendientes[0]
+    return etapa, f"Tiene {valores[0]} de {valores[1]} documentos obligatorios de esta fase."
+
+
+def _descripcion_alertas(contrato: dict) -> str:
+    if not contrato.get("node_id"):
+        return "Alerta: no se encontró la carpeta en Alfresco; los documentos no fueron evaluados."
+    if not contrato.get("filas"):
+        return contrato.get(
+            "observacion",
+            "Alerta: no hay documentos obligatorios configurados para esta clase.",
+        )
+    if not contrato.get("node_id"):
+        return "Alerta: no se encontró el expediente o no tiene archivos; requiere revisión manual."
+    faltantes = _faltantes_texto(contrato.get("filas") or [])
+    return (
+        "La coincidencia se basa en nombre, alias y formato; el contenido debe "
+        "validarse manualmente. Documentos encontrados: " + ", ".join(
+            str(f.get("ARCHIVO", "")) for f in contrato.get("filas") or []
+            if str(f.get("ESTADO", "")).upper() == "ENCONTRADO" and f.get("ARCHIVO")
+        ) + (f". Alertas: faltan {faltantes}." if faltantes else ". Sin faltantes obligatorios.")
+    )
 
 
 def _col_diagnostico(nombre: str) -> int:
@@ -185,7 +219,7 @@ def _escribir_resumen(ws, contratos: list, titulo: str):
         esperados, encontrados, faltantes, pct = _conteos(contrato)
         node_id = contrato.get("node_id", "")
         carpeta = contrato.get("carpeta", "")
-        estado_alf = contrato.get("estado_alfresco", "")
+        estado_alf = "ENCONTRADA" if node_id else contrato.get("estado_alfresco", "")
         valores = [
             i,
             contrato.get("contrato", ""),
@@ -194,6 +228,7 @@ def _escribir_resumen(ws, contratos: list, titulo: str):
             contrato.get("contratista", ""),
             contrato.get("centro_costo", ""),
             contrato.get("supervisor", ""),
+            contrato.get("correo_ordenador", ""),
             contrato.get("valor", ""),
             contrato.get("fecha_inicio", ""),
             contrato.get("fecha_fin", ""),
@@ -298,10 +333,24 @@ def _faltantes_texto(filas: list) -> str:
 
 
 def _estado_diagnostico(contrato: dict, faltantes: int) -> str:
-    """Estado resumido del expediente para la hoja DIAGNOSTICO."""
-    if str(contrato.get("estado_alfresco", "")).upper() != "ENCONTRADA":
-        return "No encontrada"
-    return "Completo" if faltantes == 0 else "Incompleto"
+    """Fase general del contrato para evitar confundirla con completitud."""
+    if not contrato.get("node_id"):
+        return "No encontrada en Alfresco"
+    etapas = contrato.get("etapas") or {}
+    if not etapas:
+        return "Clase no configurada"
+    etapa = next(
+        (nombre for nombre, valores in etapas.items() if valores[0] < valores[1]),
+        next(reversed(etapas), ""),
+    )
+    nombre = str(etapa).lower()
+    if nombre.startswith("precontractual"):
+        return "Precontractual"
+    if "cierre" in nombre or "liquid" in nombre:
+        return "Poscontractual"
+    if etapa:
+        return "Contractual"
+    return "Contractual" if faltantes == 0 else "Contractual (pendiente de documentos)"
 
 
 def _escribir_diagnostico(ws, contratos: list, fecha_revision: str):
@@ -336,7 +385,7 @@ def _escribir_diagnostico(ws, contratos: list, fecha_revision: str):
             celda.hyperlink = URL_CARPETA.format(node_id=node_id)
             celda.font = FUENTE_ENLACE
 
-        _, _, _, pct = _conteos(contrato)
+        _, _, _, pct = _conteos(contrato) if contrato.get("node_id") else (0, 0, 0, "")
         color = _color_pct(pct)
         if color:
             ws.cell(row=fila, column=_col_diagnostico("% COMPLETITUD")).fill = PatternFill(
@@ -363,7 +412,9 @@ def fila_diagnostico(contrato: dict, fecha_revision: str = "") -> dict:
     esperados, encontrados, faltantes, pct = _conteos(contrato)
     node_id = contrato.get("node_id", "")
     filas = contrato.get("filas") or []
-    encontrada = str(contrato.get("estado_alfresco", "")).upper() == "ENCONTRADA"
+    # node_id prueba que la carpeta existe aunque esté vacía.
+    encontrada = bool(node_id)
+    evaluable = bool(node_id)
 
     observacion = contrato.get("observacion", "")
     if not observacion:
@@ -385,19 +436,21 @@ def fila_diagnostico(contrato: dict, fecha_revision: str = "") -> dict:
         URL_CARPETA.format(node_id=node_id) if node_id else "",
         "Encontrada" if encontrada else "No encontrada",
         contrato.get("descargada", "Sí" if encontrada else "No"),
-        contrato.get("coincide_matriz", "No evaluado"),
         contrato.get("num_pagos", ""),
-        esperados,
-        encontrados,
-        faltantes,
-        _faltantes_texto(filas),
-        f"{pct}%",
+        esperados if evaluable else "No evaluado",
+        encontrados if evaluable else "No evaluado",
+        faltantes if evaluable else "No evaluado",
+        _faltantes_texto(filas) if evaluable else "No evaluado",
+        f"{pct}%" if evaluable else "No evaluado",
         _estado_diagnostico(contrato, faltantes),
-        contrato.get("documentacion_copiada", "No"),
         contrato.get("supervisor", ""),
         contrato.get("correo_ordenador", ""),
         observacion,
         contrato.get("fecha_revision", fecha_revision),
+        _resumen_fase(contrato)[0],
+        _resumen_fase(contrato)[1],
+        f"{faltantes} de {esperados}: {_faltantes_texto(filas)}" if evaluable else "No evaluado",
+        _descripcion_alertas(contrato),
     ]
     return dict(zip(CABECERAS_DIAGNOSTICO, valores))
 

@@ -29,6 +29,7 @@ class PipelineWorker(QThread):
 
     etapa_actualizada = pyqtSignal(str, str, int, str)
     progreso_global = pyqtSignal(int, int)
+    progreso_contrato = pyqtSignal(int, int, str)
     pausa_requerida = pyqtSignal(str)
     finalizado = pyqtSignal(bool, str)
 
@@ -71,6 +72,7 @@ class PipelineWorker(QThread):
             self.documentos,
             on_etapa=lambda *args: self.etapa_actualizada.emit(*args),
             on_progreso=lambda *args: self.progreso_global.emit(*args),
+            on_contrato=lambda *args: self.progreso_contrato.emit(*args),
             cancelado=self.isInterruptionRequested,
             demo=self.demo,
         )
