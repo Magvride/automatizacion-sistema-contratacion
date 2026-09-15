@@ -7,7 +7,7 @@
 archivos/**
 !archivos/**/
 !archivos/**/.gitkeep
-!archivos/00_Datos_Raw/descripcion.txt
+!archivos/00_Datos_Raw/
 
 # Artefactos generados por las ejecuciones / herramientas
 graphify-out/
