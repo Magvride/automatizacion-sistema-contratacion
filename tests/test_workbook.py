@@ -112,6 +112,7 @@ def test_hoja_diagnostico(tmp_path):
 
     assert ws.cell(row=5, column=col("CONTRATO")).value == "20-2026000003"
     assert ws.cell(row=5, column=col("CLASE")).value == "20"
+    assert ws.cell(row=5, column=col("CENTRO DE COSTO")).value == "CC-1"
     assert ws.cell(row=5, column=col("CARPETA ENCONTRADA")).value == "Encontrada"
     assert ws.cell(row=5, column=col("DOCS REQUERIDOS")).value == 2
     assert ws.cell(row=5, column=col("DOCS HALLADOS")).value == 1

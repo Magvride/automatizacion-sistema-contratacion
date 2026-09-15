@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -135,15 +136,15 @@ class _DialogoEnvio(QDialog):
         super().__init__(parent)
         self.mensajes = mensajes
         self.setWindowTitle("Autorizar envío de correos")
-        self.setMinimumWidth(560)
+        self.setMinimumSize(760, 620)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
         aviso = QLabel(
-            f"Se enviarán <b>{len(mensajes)}</b> correo(s) a los ordenadores de "
-            "contratos que no tienen carpeta en Alfresco. Revisa los destinatarios "
-            "y autoriza el envío."
+            f"Se prepararon <b>{len(mensajes)}</b> correo(s) para envío masivo. "
+            "Antes de autorizar, revisa el reporte de verificación en Alfresco y "
+            "confirma que los destinatarios y el contenido de cada borrador sean correctos."
         )
         aviso.setWordWrap(True)
         layout.addWidget(aviso)
@@ -154,9 +155,27 @@ class _DialogoEnvio(QDialog):
                 f"{mensaje['para']}  —  {mensaje['ordenador']}  —  "
                 f"{len(mensaje['contratos'])} contrato(s)"
             )
+        lista.setMinimumHeight(115)
         layout.addWidget(lista)
 
-        self.chk_autorizo = QCheckBox("Autorizo el envío de estos correos")
+        detalle = QLabel(
+            "Borrador seleccionado. Este es el asunto y el mensaje exactos que se enviarán."
+        )
+        detalle.setWordWrap(True)
+        layout.addWidget(detalle)
+
+        self.vista_mensaje = QPlainTextEdit()
+        self.vista_mensaje.setReadOnly(True)
+        self.vista_mensaje.setPlaceholderText("Selecciona un destinatario para ver su borrador.")
+        layout.addWidget(self.vista_mensaje, 1)
+
+        lista.currentRowChanged.connect(self._mostrar_mensaje)
+        if mensajes:
+            lista.setCurrentRow(0)
+
+        self.chk_autorizo = QCheckBox(
+            "He revisado el reporte de Alfresco y autorizo el envío masivo de estos correos."
+        )
         layout.addWidget(self.chk_autorizo)
 
         botones = QDialogButtonBox(
@@ -169,6 +188,20 @@ class _DialogoEnvio(QDialog):
         botones.accepted.connect(self.accept)
         botones.rejected.connect(self.reject)
         layout.addWidget(botones)
+
+    def _mostrar_mensaje(self, indice: int) -> None:
+        if indice < 0 or indice >= len(self.mensajes):
+            self.vista_mensaje.clear()
+            return
+        mensaje = self.mensajes[indice]
+        contratos = "\n".join(f"- {contrato}" for contrato in mensaje["contratos"])
+        self.vista_mensaje.setPlainText(
+            f"PARA: {mensaje['para']}\n"
+            f"ORDENADOR: {mensaje['ordenador']}\n"
+            f"CONTRATOS: {contratos}\n"
+            f"ASUNTO: {mensaje['asunto']}\n\n"
+            f"{mensaje['cuerpo']}"
+        )
 
 
 class _NotificacionCard(Card):
@@ -190,7 +223,8 @@ class _NotificacionCard(Card):
 
         descripcion = QLabel(
             "Envía un correo a los ordenadores de los contratos que no tienen "
-            "carpeta en Alfresco. El envío requiere tu autorización explícita."
+            "carpeta en Alfresco. Primero revisa el reporte y los borradores; el "
+            "envío masivo requiere autorización explícita."
         )
         descripcion.setObjectName("PageSubtitle")
         descripcion.setWordWrap(True)
