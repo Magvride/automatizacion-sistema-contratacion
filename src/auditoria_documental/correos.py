@@ -15,6 +15,7 @@ La selección por contrato depende de ``ESTADO`` y de
 import os
 import re
 import unicodedata
+from datetime import date, datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -32,6 +33,13 @@ HOJAS_CORREOS = ("CORREOS",)
 TIPOS = ("faltante", "inconsistencia", "no_localizada", "completo", "consolidado")
 
 _CAMPO_RE = re.compile(r"\{\{\s*([A-Z_]+)\s*\}\}")
+
+
+def asunto_correo(contrato: str = "", cantidad: int = 1) -> str:
+    """Asunto del correo: sin saludo ni nombre del ordenador."""
+    if cantidad > 1:
+        return "Documentación pendiente de varios contratos"
+    return f"Documentación pendiente del contrato {str(contrato or '').strip()}".strip()
 
 
 def _clave(texto) -> str:
@@ -168,14 +176,26 @@ def construir_mensajes(
             "FECHA_LIMITE": fecha_limite,
             "UNIDAD": unidad_por_contrato.get(contrato_id, contrato.get("centro_costo", "")),
         }
+        datos_fecha = _datos_fecha(contrato.get("fecha_contrato", ""), fecha_revision)
         mensajes.append(
             {
                 "contrato": contrato_id,
                 "tipo": plantilla["titulo"],
                 "para": fila["SUPERVISOR / DESTINATARIO"],
                 "correo": fila["CORREO ORDENADOR"],
-                "asunto": renderizar(plantilla["asunto"], valores),
+                "asunto": asunto_correo(contrato_id),
                 "cuerpo": renderizar(plantilla["cuerpo"], valores),
+                "ordenador_centro_costo": " - ".join(
+                    parte for parte in (
+                        fila["SUPERVISOR / DESTINATARIO"],
+                        fila["CENTRO DE COSTO"],
+                    ) if str(parte).strip()
+                ),
+                "centro_costo": fila["CENTRO DE COSTO"],
+                "contratista": contrato.get("contratista", ""),
+                "objeto": contrato.get("objeto", ""),
+                "listado_faltantes": fila["LISTADO DE FALTANTES"],
+                **datos_fecha,
             }
         )
     return mensajes
@@ -187,7 +207,7 @@ def escribir_borradores(mensajes: list, ruta: str) -> str:
     for mensaje in mensajes:
         lineas.append("=" * 72)
         lineas.append(f"PARA: {mensaje['para']}")
-        lineas.append(f"ASUNTO: {mensaje['asunto']}")
+        lineas.append(f"ASUNTO: {asunto_correo(mensaje.get('contrato', ''))}")
         lineas.append("")
         lineas.append(mensaje["cuerpo"])
         lineas.append("")
@@ -207,8 +227,8 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
     cabeceras = ["CORREO", "ASUNTO", "CUERPO"]
     hoja.append(cabeceras)
 
-    for mensaje in mensajes or []:
-        correo, asunto, cuerpo = _mensaje_power_automate(mensaje)
+    filas = _agrupar_mensajes_excel(mensajes)
+    for correo, asunto, cuerpo in filas:
         hoja.append([
             correo,
             asunto,
@@ -226,8 +246,8 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
     hoja.column_dimensions["C"].width = 110
     hoja.freeze_panes = "A2"
 
-    if mensajes:
-        ultima_fila = len(mensajes) + 1
+    if filas:
+        ultima_fila = len(filas) + 1
         tabla = Table(displayName="CorreosPowerAutomate", ref=f"A1:C{ultima_fila}")
         tabla.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2",
@@ -244,23 +264,150 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
 
     os.makedirs(os.path.dirname(ruta) or ".", exist_ok=True)
     libro.save(ruta)
-    logger.info("Excel de correos para Power Automate guardado: %s (%d).", ruta, len(mensajes or []))
+    logger.info("Excel de correos para Power Automate guardado: %s (%d).", ruta, len(filas))
     return ruta
 
 
-def _mensaje_power_automate(mensaje: dict) -> tuple[str, str, str]:
-    """Normaliza el texto del Excel para el envío al ordenador responsable."""
-    ordenador = str(mensaje.get("para", "")).strip()
+_CIERRE_CORREO = (
+    "Le agradecemos gestionar el cargue de la documentación a la brevedad posible, "
+    "con el fin de mantener los expedientes al día y evitar retrasos en la rendición. "
+    "Cualquier novedad que impida el cargue del contrato, le agradecemos notificarlo.\n\n"
+    "Gracias por su colaboración."
+)
+
+
+def _agrupar_mensajes_excel(mensajes: list) -> list:
+    """Agrupa en un solo correo los contratos del mismo destinatario."""
+    grupos = {}
+    orden = []
+    for indice, mensaje in enumerate(mensajes or []):
+        correo = str(mensaje.get("correo", "")).strip()
+        clave = correo.casefold() or f"__sin_correo_{indice}"
+        if clave not in grupos:
+            grupos[clave] = {"correo": correo, "mensajes": [mensaje]}
+            orden.append(clave)
+        else:
+            grupos[clave]["mensajes"].append(mensaje)
+
+    filas = []
+    for clave in orden:
+        grupo = grupos[clave]
+        lote = grupo["mensajes"]
+        contrato = str(lote[0].get("contrato", "")).strip()
+        asunto = asunto_correo(contrato=contrato, cantidad=len(lote))
+        filas.append((grupo["correo"], asunto, _cuerpo_power_automate(lote)))
+    return filas
+
+
+def _es_no_localizada(mensaje: dict) -> bool:
+    return "NO LOCALIZADA" in str(mensaje.get("tipo", "")).upper()
+
+
+def _linea_contrato(numero: int, mensaje: dict) -> str:
     contrato = str(mensaje.get("contrato", "")).strip()
-    asunto = f"Cordial saludo, {ordenador}. Documentación pendiente del contrato {contrato}"
-    cuerpo = (
-        f"Cordial saludo, {ordenador}.\n\n"
-        f"No se verificó que se hubiera cargado la carpeta correspondiente al contrato "
-        f"{contrato}. Por favor, suba la carpeta con el número de contrato {contrato} "
-        "y los documentos correspondientes.\n\n"
-        "Gracias."
+    linea = (
+        f"{numero}. Contrato {contrato}— {mensaje.get('contratista', '')} — generado el día "
+        f"{mensaje.get('fecha_contrato', '')}, {mensaje.get('dias_transcurridos', '')} "
+        f"— Objeto: {mensaje.get('objeto', '')}"
     )
-    return str(mensaje.get("correo", "")).strip(), asunto, cuerpo
+    faltantes = str(mensaje.get("listado_faltantes", "")).strip()
+    if not _es_no_localizada(mensaje) and faltantes:
+        linea += f"\nDocumentos pendientes: {faltantes}"
+    return linea
+
+
+def _cuerpo_power_automate(mensajes: list) -> str:
+    """Arma un cuerpo con un solo saludo, un marco y un solo cierre."""
+    primero = mensajes[0]
+    ordenador = str(primero.get("para", "")).strip()
+    marco = (
+        f"En el marco del seguimiento contractual del mes de {primero.get('mes_documento', '')} "
+        f"de 2026 (2026-{primero.get('mes_numero', '')}), le recordamos de manera atenta "
+    )
+    no_localizados = [m for m in mensajes if _es_no_localizada(m)]
+    pendientes = [m for m in mensajes if not _es_no_localizada(m)]
+
+    if len(mensajes) == 1:
+        if no_localizados:
+            intro = (
+                "que el siguiente expediente contractual a su cargo aún no ha sido cargado "
+                "en el repositorio institucional Alfresco:\n\n"
+            )
+        else:
+            intro = (
+                "que el expediente contractual ya fue localizado en Alfresco, pero aún presenta "
+                "documentación pendiente:\n\n"
+            )
+        detalle = _linea_contrato(1, mensajes[0])
+    elif no_localizados and not pendientes:
+        intro = (
+            "que los siguientes expedientes contractuales a su cargo aún no han sido cargados "
+            "en el repositorio institucional Alfresco:\n\n"
+        )
+        detalle = "\n".join(_linea_contrato(i, m) for i, m in enumerate(no_localizados, start=1))
+    elif pendientes and not no_localizados:
+        intro = (
+            "que los siguientes expedientes ya fueron localizados en Alfresco, pero aún presentan "
+            "documentación pendiente:\n\n"
+        )
+        detalle = "\n".join(_linea_contrato(i, m) for i, m in enumerate(pendientes, start=1))
+    else:
+        intro = (
+            "que los siguientes expedientes contractuales a su cargo presentan novedades "
+            "en el repositorio institucional Alfresco:\n\n"
+        )
+        bloques = []
+        numero = 1
+        if no_localizados:
+            lineas = []
+            for mensaje in no_localizados:
+                lineas.append(_linea_contrato(numero, mensaje))
+                numero += 1
+            bloques.append("Expedientes no cargados en Alfresco:\n" + "\n".join(lineas))
+        if pendientes:
+            lineas = []
+            for mensaje in pendientes:
+                lineas.append(_linea_contrato(numero, mensaje))
+                numero += 1
+            bloques.append("Expedientes localizados con documentación pendiente:\n" + "\n".join(lineas))
+        detalle = "\n\n".join(bloques)
+
+    return (
+        f"Cordial saludo, {ordenador}.\n\n"
+        f"{marco}{intro}{detalle}\n\n"
+        f"{_CIERRE_CORREO}"
+    )
+
+
+def _fecha_contrato(valor):
+    """Convierte las fechas del consolidado a ``date`` cuando es posible."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    texto = str(valor or "").strip()
+    for formato in ("%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(texto[:10], formato).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _datos_fecha(fecha_contrato, fecha_documento: str = "") -> dict:
+    """Obtiene el texto de fecha, el mes del documento y días transcurridos."""
+    fecha = _fecha_contrato(fecha_contrato)
+    fecha_revision = _fecha_contrato(fecha_documento) or date.today()
+    mes_numero = f"{fecha_revision.month:02d}"
+    return {
+        "fecha_contrato": fecha.strftime("%Y/%m/%d") if fecha else str(fecha_contrato or ""),
+        "mes_documento": (
+            ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+             "septiembre", "octubre", "noviembre", "diciembre")[fecha_revision.month - 1]
+        ),
+        "mes_numero": mes_numero,
+        "dias_transcurridos": (date.today() - fecha).days if fecha else "",
+    }
 
 
 def generar_borradores(
