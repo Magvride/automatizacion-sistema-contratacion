@@ -24,8 +24,8 @@ hiddenimports = [
     "src",
 ]
 
-# PyQt6 contiene módulos y datos descubiertos dinámicamente.
-for package in ("PyQt6",):
+# PyQt6 y keyring contienen módulos y datos descubiertos dinámicamente.
+for package in ("PyQt6", "keyring"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas.extend(package_datas)
     binaries.extend(package_binaries)

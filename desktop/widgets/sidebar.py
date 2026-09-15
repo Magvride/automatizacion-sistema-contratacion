@@ -18,6 +18,7 @@ ITEMS = (
     ("Panel de ejecución", icons.PANEL),
     ("Resultados", icons.RESULTS),
     ("Documentos de entrada", icons.DATABASE),
+    ("Configuración", icons.GEAR),
 )
 
 

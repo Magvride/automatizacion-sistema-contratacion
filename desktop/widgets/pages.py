@@ -6,11 +6,13 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -128,16 +130,22 @@ class HistoryPage(QWidget):
     def _abrir_item(self, item: QListWidgetItem) -> None:
         ruta = item.data(Qt.ItemDataRole.UserRole)
         if ruta and os.path.isfile(ruta):
-            os.startfile(ruta)  # noqa: S606 - Windows
+            try:
+                os.startfile(ruta)  # noqa: S606 - Windows
+            except OSError as exc:
+                QMessageBox.warning(self, "No se pudo abrir el registro", str(exc))
 
     def _abrir_carpeta(self) -> None:
         carpeta = self._carpeta_logs
-        os.makedirs(carpeta, exist_ok=True)
-        os.startfile(carpeta)  # noqa: S606 - Windows
+        try:
+            os.makedirs(carpeta, exist_ok=True)
+            os.startfile(carpeta)  # noqa: S606 - Windows
+        except OSError as exc:
+            QMessageBox.warning(self, "No se pudo abrir la carpeta", str(exc))
 
 
 class ConfigPage(QWidget):
-    """Configuración de las rutas manuales (matriz, ordenadores, OneDrive)."""
+    """Configuración de las rutas manuales y credenciales de Alfresco."""
 
     actualizado = pyqtSignal(str)
 
@@ -153,13 +161,41 @@ class ConfigPage(QWidget):
         titulo.setObjectName("PageTitle")
         layout.addWidget(titulo)
 
-        self._lbl_matriz = self._fila_ruta(layout, "Matriz manual", self._elegir_matriz)
-        self._lbl_ordenadores = self._fila_ruta(layout, "Ordenadores", self._elegir_ordenadores)
-        self._lbl_onedrive = self._fila_ruta(layout, "Carpeta OneDrive", self._elegir_onedrive)
+        credenciales = Card()
+        cred_layout = QVBoxLayout(credenciales)
+        cred_layout.setContentsMargins(18, 14, 18, 14)
+        cred_layout.setSpacing(8)
+        cred_titulo = QLabel("Credenciales de Alfresco")
+        cred_titulo.setObjectName("CardTitle")
+        cred_layout.addWidget(cred_titulo)
+        cred_info = QLabel(
+            "Se guardan una sola vez: la contraseña se almacena en el Administrador "
+            "de credenciales de Windows y no en un archivo de texto."
+        )
+        cred_info.setObjectName("PageSubtitle")
+        cred_info.setWordWrap(True)
+        cred_layout.addWidget(cred_info)
 
-        boton = _boton("Restablecer valores por defecto")
-        boton.clicked.connect(self._restablecer)
-        layout.addWidget(boton, alignment=Qt.AlignmentFlag.AlignLeft)
+        formulario = QFormLayout()
+        self._alfresco_url = QLineEdit()
+        self._alfresco_usuario = QLineEdit()
+        self._alfresco_contrasena = QLineEdit()
+        self._alfresco_contrasena.setEchoMode(QLineEdit.EchoMode.Password)
+        self._alfresco_contrasena.setPlaceholderText("Dejar vacío para conservar la guardada")
+        formulario.addRow("URL", self._alfresco_url)
+        formulario.addRow("Usuario", self._alfresco_usuario)
+        formulario.addRow("Contraseña", self._alfresco_contrasena)
+        cred_layout.addLayout(formulario)
+
+        cred_acciones = QHBoxLayout()
+        btn_guardar = _boton("Guardar credenciales", "PrimaryButton")
+        btn_guardar.clicked.connect(self._guardar_alfresco)
+        self._lbl_credenciales = QLabel()
+        self._lbl_credenciales.setWordWrap(True)
+        cred_acciones.addWidget(btn_guardar)
+        cred_acciones.addWidget(self._lbl_credenciales, 1)
+        cred_layout.addLayout(cred_acciones)
+        layout.addWidget(credenciales)
 
         layout.addStretch(1)
         self.refrescar()
@@ -193,68 +229,34 @@ class ConfigPage(QWidget):
     # ------------------------------------------------------------------
     def refrescar(self) -> None:
         try:
-            from config import (
-                ruta_matriz_manual,
-                ruta_onedrive_destino,
-                ruta_ordenadores,
-            )
+            from config import credenciales_alfresco
         except Exception as exc:  # noqa: BLE001
-            self._lbl_matriz.setText(f"No disponible ({exc})")
-            self._lbl_ordenadores.setText("—")
-            self._lbl_onedrive.setText("—")
+            self._lbl_credenciales.setText(f"No disponible: {exc}")
             return
 
-        self._lbl_matriz.setText(str(ruta_matriz_manual()))
-        self._lbl_ordenadores.setText(str(ruta_ordenadores()))
-        self._lbl_onedrive.setText(str(ruta_onedrive_destino()))
-
-    def _elegir_matriz(self) -> None:
-        from config import configurar_rutas, ruta_matriz_manual, ruta_ordenadores
-
-        ruta, _ = QFileDialog.getOpenFileName(
-            self, "Selecciona la matriz manual", str(ruta_matriz_manual().parent),
-            "Excel (*.xlsx)",
-        )
-        if ruta:
-            configurar_rutas(matriz_manual=ruta, ordenadores=str(ruta_ordenadores()))
-            self.refrescar()
-            self.actualizado.emit(f"Matriz manual actualizada: {ruta}")
-
-    def _elegir_ordenadores(self) -> None:
-        from config import configurar_rutas, ruta_matriz_manual, ruta_ordenadores
-
-        ruta, _ = QFileDialog.getOpenFileName(
-            self, "Selecciona el archivo de ordenadores", str(ruta_ordenadores().parent),
-            "Excel (*.xlsx)",
-        )
-        if ruta:
-            configurar_rutas(matriz_manual=str(ruta_matriz_manual()), ordenadores=ruta)
-            self.refrescar()
-            self.actualizado.emit(f"Archivo de ordenadores actualizado: {ruta}")
-
-    def _elegir_onedrive(self) -> None:
-        from config import (
-            configurar_rutas,
-            ruta_matriz_manual,
-            ruta_onedrive_destino,
-            ruta_ordenadores,
-        )
-
-        ruta = QFileDialog.getExistingDirectory(
-            self, "Selecciona la carpeta destino en OneDrive", str(ruta_onedrive_destino().parent)
-        )
-        if ruta:
-            configurar_rutas(
-                matriz_manual=str(ruta_matriz_manual()),
-                ordenadores=str(ruta_ordenadores()),
-                onedrive_destino=ruta,
+        try:
+            datos = credenciales_alfresco()
+            self._alfresco_url.setText(datos["url"])
+            self._alfresco_usuario.setText(datos["usuario"])
+            self._lbl_credenciales.setText(
+                "Credenciales guardadas" if datos["contrasena"] else "Falta guardar la contraseña"
             )
-            self.refrescar()
-            self.actualizado.emit(f"Carpeta OneDrive actualizada: {ruta}")
+        except Exception as exc:  # noqa: BLE001
+            self._lbl_credenciales.setText(f"No disponible: {exc}")
 
-    def _restablecer(self) -> None:
-        from config import restablecer_rutas
+    def _guardar_alfresco(self) -> None:
+        try:
+            from config import guardar_credenciales_alfresco
 
-        restablecer_rutas()
-        self.refrescar()
-        self.actualizado.emit("Rutas restablecidas a los valores por defecto.")
+            guardar_credenciales_alfresco(
+                self._alfresco_url.text(),
+                self._alfresco_usuario.text(),
+                self._alfresco_contrasena.text(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Credenciales de Alfresco", str(exc))
+            return
+
+        self._alfresco_contrasena.clear()
+        self._lbl_credenciales.setText("Credenciales guardadas correctamente")
+        self.actualizado.emit("Credenciales de Alfresco guardadas de forma segura.")

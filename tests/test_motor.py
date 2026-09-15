@@ -144,3 +144,22 @@ def test_ejecutar_auditoria_paralelo(tmp_path):
     hoja = libro["DIAGNOSTICO"]
     orden = [hoja.cell(row=f, column=col).value for f in range(5, 9)]
     assert orden == [c["contrato"] for c in contratos]
+
+
+def test_error_en_callback_no_detiene_auditoria(tmp_path):
+    gateway = FakeGateway({})
+
+    def callback_fallido(*_args):
+        raise RuntimeError("error de la interfaz")
+
+    resumen = ejecutar_auditoria(
+        [{"contrato": "20-2026000003"}],
+        gateway,
+        ruta_diccionario=_diccionario(tmp_path),
+        ruta_06=str(tmp_path / "06.csv"),
+        ruta_07=str(tmp_path / "07.csv"),
+        ruta_09=str(tmp_path / "09.xlsx"),
+        on_progreso=callback_fallido,
+    )
+
+    assert resumen["total"] == 1

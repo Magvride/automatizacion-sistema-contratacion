@@ -127,6 +127,14 @@ def _procesar(fila, gateway, diccionario, contratistas, max_archivos):
 
 
 def _ejecutar_secuencial(filas, gateway, diccionario, contratistas, max_archivos, on_progreso, on_resultado):
+    def emitir(callback, *args):
+        if not callback:
+            return
+        try:
+            callback(*args)
+        except Exception as exc:  # noqa: BLE001 - un callback no debe abortar la auditoría
+            logger.error("Error en callback de auditoría: %s", exc, exc_info=True)
+
     resultados = []
     total = len(filas)
     for indice, fila in enumerate(filas, start=1):
@@ -134,10 +142,8 @@ def _ejecutar_secuencial(filas, gateway, diccionario, contratistas, max_archivos
         if resultado is None:
             continue
         resultados.append(resultado)
-        if on_resultado:
-            on_resultado(resultado)
-        if on_progreso:
-            on_progreso(indice, total)
+        emitir(on_resultado, resultado)
+        emitir(on_progreso, indice, total)
     return resultados
 
 
@@ -154,16 +160,36 @@ def _ejecutar_paralelo(filas, gateway, diccionario, contratistas, max_archivos, 
     creados = []
 
     def tarea(indice, fila):
-        gw = getattr(local, "gateway", None)
-        if gw is None:
-            gw = gateway.clonar()
-            local.gateway = gw
-            with lock:
-                creados.append(gw)
-        return indice, _procesar(fila, gw, diccionario, contratistas, max_archivos)
+        try:
+            gw = getattr(local, "gateway", None)
+            if gw is None:
+                gw = gateway.clonar()
+                local.gateway = gw
+                with lock:
+                    creados.append(gw)
+            return indice, _procesar(fila, gw, diccionario, contratistas, max_archivos)
+        except Exception as exc:  # noqa: BLE001 - un contrato fallido no detiene los demás
+            codigo = str(fila.get("contrato", "")).strip()
+            logger.error("Fallo preparando la consulta de '%s': %s", codigo, exc, exc_info=True)
+            clase = clase_de_contrato(codigo, fila.get("contratista", ""))
+            resultado = resultado_error(
+                {"contrato": codigo, "contratista": fila.get("contratista", "")},
+                obligatorios_por_clase(diccionario, clase),
+                es_tipo_18=clase.startswith("18"),
+                descripcion=f"Error al preparar la consulta de Alfresco: {exc}",
+            )
+            return indice, _enriquecer(resultado, fila)
+
+    def emitir(callback, *args):
+        if not callback:
+            return
+        try:
+            callback(*args)
+        except Exception as exc:  # noqa: BLE001 - un callback no debe abortar la auditoría
+            logger.error("Error en callback de auditoría: %s", exc, exc_info=True)
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futuros = [executor.submit(tarea, i, f) for i, f in enumerate(filas)]
+        futuros = {executor.submit(tarea, i, f): i for i, f in enumerate(filas)}
         for futuro in as_completed(futuros):
             indice, resultado = futuro.result()
             if resultado is None:
@@ -171,10 +197,8 @@ def _ejecutar_paralelo(filas, gateway, diccionario, contratistas, max_archivos, 
             resultados[indice] = resultado
             with lock:
                 completados += 1
-                if on_resultado:
-                    on_resultado(resultado)
-                if on_progreso:
-                    on_progreso(completados, total)
+                emitir(on_resultado, resultado)
+                emitir(on_progreso, completados, total)
 
     for gw in creados:
         try:

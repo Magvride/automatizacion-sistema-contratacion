@@ -40,7 +40,7 @@ def test_ejecutar_servicio_genera_todas_las_salidas(tmp_path):
 
     assert resumen["total"] == 1
     assert resumen["encontradas"] == 1
-    for clave in ("verificacion", "faltantes", "auditoria", "correos", "informe"):
+    for clave in ("verificacion", "faltantes", "auditoria", "correos", "correos_excel", "informe"):
         assert (salida / SALIDAS[clave]).is_file(), clave
 
     assert resumen["ruta_informe"].endswith("Informe_Auditoria_Contrato.html")

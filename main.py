@@ -25,7 +25,14 @@ logger = configurar_logger("main")
 
 from src.conciliacion_datos import generar_consolidado
 from src.utils.limpieza import limpiar, limpiar_salidas
-from src.config import INTERNO_DIR, MATRIZ_MANUAL_DIR, REPORTES_DIR, RESULTADOS_DIR, preparar_directorios
+from src.config import (
+    INTERNO_DIR,
+    MATRIZ_MANUAL_DIR,
+    REPORTES_DIR,
+    RESULTADOS_DIR,
+    credenciales_alfresco,
+    preparar_directorios,
+)
 
 if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
@@ -43,7 +50,7 @@ def getenv(clave: str, requerido: bool = False) -> str:
 
 
 def construir_salidas(base_dir: str) -> dict:
-    """Rutas de trabajo. Al cliente solo se le entregan ``09`` y ``11``.
+    """Rutas de trabajo. Al cliente se entregan auditoría, informe y correos.
 
     El resto (consolidado, verificación, resultados y borradores) se guarda en
     ``archivos/_interno`` para no ensuciar la carpeta de resultados.
@@ -63,6 +70,7 @@ def construir_salidas(base_dir: str) -> dict:
         "faltantes": os.path.join(interno, "07_Expedientes_Faltantes.csv"),
         "auditoria": os.path.join(carpeta, "auditoria_contratos.xlsx"),
         "correos_auditoria": os.path.join(interno, "10_Correos_Auditoria.txt"),
+        "correos_excel": os.path.join(carpeta, "10_Correos_Auditoria.xlsx"),
         "informe": os.path.join(carpeta, "Informe_Auditoria_Contrato.html"),
     }
 
@@ -346,17 +354,10 @@ def fase_alfresco_mcp(args, salidas: dict, on_progreso=None, on_resultado=None) 
         logger.error("El consolidado 02 está vacío; no hay contratos por verificar.")
         sys.exit(1)
 
-    base = (
-        os.getenv("ALFRESCO_SHARE_URL")
-        or os.getenv("ALFRESCO_URL")
-        or "https://gesdoc.uis.edu.co/share/page"
-    )
-    usuario = (
-        os.getenv("ALFRESCO_SHARE_USER")
-        or os.getenv("ALFRESCO_USER")
-        or "consulta_contratos"
-    )
-    contrasena = os.getenv("ALFRESCO_SHARE_PASS", "").strip() or os.getenv("ALFRESCO_PASS", "").strip()
+    credenciales = credenciales_alfresco()
+    base = credenciales["url"]
+    usuario = credenciales["usuario"]
+    contrasena = credenciales["contrasena"]
     if not contrasena:
         logger.error("Falta la contraseña de Alfresco (ALFRESCO_SHARE_PASS o ALFRESCO_PASS).")
         sys.exit(1)
@@ -393,7 +394,7 @@ def fase_alfresco_mcp(args, salidas: dict, on_progreso=None, on_resultado=None) 
         contrasena=contrasena,
         verify_ssl=os.getenv("ALFRESCO_VERIFY_SSL", "false").lower() == "true",
         timeout=int(os.getenv("ALFRESCO_TIMEOUT", "15")),
-        auth_method=os.getenv("ALFRESCO_AUTH_METHOD", "basic"),
+        auth_method=credenciales["auth_method"],
     )
 
     estado = {"resultados": []}
@@ -438,6 +439,7 @@ def fase_alfresco_mcp(args, salidas: dict, on_progreso=None, on_resultado=None) 
             ruta_correos,
             ruta_diccionario=ruta_diccionario,
             fecha_revision=fecha_rev,
+            ruta_excel=salidas.get("correos_excel", ""),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("No se pudieron generar los borradores de correo: %s", exc)

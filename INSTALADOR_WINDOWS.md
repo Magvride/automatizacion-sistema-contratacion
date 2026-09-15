@@ -28,14 +28,17 @@ Al instalar, el acceso directo abre directamente la GUI equivalente a:
 python -m desktop
 ```
 
-Las credenciales deben configurarse en el archivo `.env` del directorio de la
-aplicación usando `.env.example` como plantilla. El instalador no contiene
-credenciales reales.
+En el primer inicio, las credenciales se pueden guardar desde la pantalla
+**Configuración**. La URL y el usuario se guardan en la configuración local y la
+contraseña se almacena en el Administrador de credenciales de Windows. Después
+no es necesario volver a digitarlas. El archivo `.env` continúa siendo opcional
+y funciona como respaldo para instalaciones existentes; el instalador no
+contiene credenciales reales.
 
 ## Backend de Alfresco
 
 La aplicación usa el backend **MCP/REST** (`--backend-alfresco mcp`, por
-defecto), que solo requiere acceso de red a `ALFRESCO_URL` y credenciales en
-`.env`. El backend legado con Selenium (`--backend-alfresco selenium`) queda
+defecto), que solo requiere acceso de red a Alfresco y las credenciales
+guardadas en Configuración o en `.env`. El backend legado con Selenium (`--backend-alfresco selenium`) queda
 disponible únicamente en el entorno de desarrollo, donde sí están instaladas
 las dependencias de scraping.

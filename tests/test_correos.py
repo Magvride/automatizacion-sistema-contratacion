@@ -7,6 +7,7 @@ from auditoria_documental.correos import (
     cargar_plantillas,
     construir_mensajes,
     escribir_borradores,
+    escribir_borradores_excel,
     renderizar,
 )
 
@@ -54,6 +55,7 @@ def _contrato_incompleto():
         "estado_alfresco": "ENCONTRADA",
         "node_id": "n1",
         "supervisor": "JUAN PEREZ",
+        "correo_ordenador": "juan@uis.edu.co",
         "filas": [
             {"ID_DOC": "D190", "DOCUMENTO": "Informe oportunidad", "FORMATO": "FCO.55",
              "ESTADO": "ENCONTRADO", "ARCHIVO": "FCO.55.pdf"},
@@ -115,3 +117,28 @@ def test_escribir_borradores(tmp_path):
         contenido = archivo.read()
     assert "PARA: JUAN PEREZ" in contenido
     assert "ASUNTO: Solicitud de documentación faltante. Contrato 20-2026000003" in contenido
+
+
+def test_escribir_borradores_excel_para_power_automate(tmp_path):
+    mensajes = [{
+        "para": "JUAN PEREZ",
+        "contrato": "20-2026000003",
+        "correo": "juan@uis.edu.co",
+        "asunto": "Solicitud de documentación faltante",
+        "cuerpo": "Cordial saludo. Faltan documentos del contrato 20-2026000003.",
+    }]
+    ruta = str(tmp_path / "10_Correos_Auditoria.xlsx")
+
+    escribir_borradores_excel(mensajes, ruta)
+
+    libro = openpyxl.load_workbook(ruta)
+    hoja = libro["Correos"]
+    assert [celda.value for celda in hoja[1]] == ["CORREO", "ASUNTO", "CUERPO"]
+    assert hoja.cell(row=2, column=1).value == "juan@uis.edu.co"
+    assert hoja.cell(row=2, column=2).value == (
+        "Cordial saludo, JUAN PEREZ. Documentación pendiente del contrato 20-2026000003"
+    )
+    assert "No se verificó" in hoja.cell(row=2, column=3).value
+    assert "20-2026000003" in hoja.cell(row=2, column=3).value
+    assert "verificación automática" not in hoja.cell(row=2, column=3).value.lower()
+    assert hoja.tables["CorreosPowerAutomate"].ref == "A1:C2"

@@ -16,6 +16,10 @@ import os
 import re
 import unicodedata
 
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.table import Table, TableStyleInfo
+
 from utils.logger import configurar_logger
 from .diccionario import _abrir_libro, buscar_diccionario
 from .workbook import fila_diagnostico
@@ -115,15 +119,23 @@ def _por_tipo(plantillas: list, tipo: str):
 def elegir_plantilla(plantillas: list, fila: dict):
     """Selecciona la plantilla adecuada según el estado del contrato."""
     estado = str(fila.get("ESTADO", "")).strip()
+    carpeta = str(fila.get("CARPETA ENCONTRADA", "")).strip().lower()
     coincide = str(fila.get("COINCIDE CON MATRIZ DE SEGUIMIENTO", "")).strip().lower()
 
-    if estado == "No encontrada":
+    if carpeta.startswith("no encontrada") or estado == "No encontrada":
         return _por_tipo(plantillas, "no_localizada")
     if coincide.startswith("no coincide"):
         return _por_tipo(plantillas, "inconsistencia")
-    if estado == "Completo":
+
+    faltantes = str(fila.get("DOCS FALTANTES", "")).strip()
+    try:
+        tiene_faltantes = int(float(faltantes or 0)) > 0
+    except (TypeError, ValueError):
+        tiene_faltantes = bool(faltantes and faltantes.lower() not in ("no evaluado", "0"))
+
+    if estado == "Completo" or (carpeta.startswith("encontrada") and not tiene_faltantes):
         return _por_tipo(plantillas, "completo")
-    if estado == "Incompleto":
+    if estado == "Incompleto" or tiene_faltantes:
         return _por_tipo(plantillas, "faltante")
     return None
 
@@ -161,6 +173,7 @@ def construir_mensajes(
                 "contrato": contrato_id,
                 "tipo": plantilla["titulo"],
                 "para": fila["SUPERVISOR / DESTINATARIO"],
+                "correo": fila["CORREO ORDENADOR"],
                 "asunto": renderizar(plantilla["asunto"], valores),
                 "cuerpo": renderizar(plantilla["cuerpo"], valores),
             }
@@ -186,6 +199,70 @@ def escribir_borradores(mensajes: list, ruta: str) -> str:
     return ruta
 
 
+def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
+    """Escribe los borradores en una tabla compatible con Power Automate."""
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Correos"
+    cabeceras = ["CORREO", "ASUNTO", "CUERPO"]
+    hoja.append(cabeceras)
+
+    for mensaje in mensajes or []:
+        correo, asunto, cuerpo = _mensaje_power_automate(mensaje)
+        hoja.append([
+            correo,
+            asunto,
+            cuerpo,
+        ])
+
+    encabezado = PatternFill("solid", fgColor="1F4E78")
+    for celda in hoja[1]:
+        celda.font = Font(bold=True, color="FFFFFF")
+        celda.fill = encabezado
+        celda.alignment = Alignment(horizontal="center", vertical="center")
+
+    hoja.column_dimensions["A"].width = 34
+    hoja.column_dimensions["B"].width = 60
+    hoja.column_dimensions["C"].width = 110
+    hoja.freeze_panes = "A2"
+
+    if mensajes:
+        ultima_fila = len(mensajes) + 1
+        tabla = Table(displayName="CorreosPowerAutomate", ref=f"A1:C{ultima_fila}")
+        tabla.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        hoja.add_table(tabla)
+
+    for fila in hoja.iter_rows(min_row=2, max_row=hoja.max_row, min_col=1, max_col=3):
+        for celda in fila:
+            celda.alignment = Alignment(vertical="top", wrap_text=True)
+
+    os.makedirs(os.path.dirname(ruta) or ".", exist_ok=True)
+    libro.save(ruta)
+    logger.info("Excel de correos para Power Automate guardado: %s (%d).", ruta, len(mensajes or []))
+    return ruta
+
+
+def _mensaje_power_automate(mensaje: dict) -> tuple[str, str, str]:
+    """Normaliza el texto del Excel para el envío al ordenador responsable."""
+    ordenador = str(mensaje.get("para", "")).strip()
+    contrato = str(mensaje.get("contrato", "")).strip()
+    asunto = f"Cordial saludo, {ordenador}. Documentación pendiente del contrato {contrato}"
+    cuerpo = (
+        f"Cordial saludo, {ordenador}.\n\n"
+        f"No se verificó que se hubiera cargado la carpeta correspondiente al contrato "
+        f"{contrato}. Por favor, suba la carpeta con el número de contrato {contrato} "
+        "y los documentos correspondientes.\n\n"
+        "Gracias."
+    )
+    return str(mensaje.get("correo", "")).strip(), asunto, cuerpo
+
+
 def generar_borradores(
     contratos: list,
     ruta: str,
@@ -193,6 +270,7 @@ def generar_borradores(
     fecha_revision: str = "",
     fecha_limite: str = "",
     unidad_por_contrato: dict = None,
+    ruta_excel: str = "",
 ) -> dict:
     """Carga plantillas, construye los borradores y los guarda.
 
@@ -207,8 +285,15 @@ def generar_borradores(
         unidad_por_contrato=unidad_por_contrato,
     )
     escribir_borradores(mensajes, ruta)
+    ruta_excel = ruta_excel or os.path.splitext(ruta)[0] + ".xlsx"
+    escribir_borradores_excel(mensajes, ruta_excel)
 
     por_tipo = {}
     for mensaje in mensajes:
         por_tipo[mensaje["tipo"]] = por_tipo.get(mensaje["tipo"], 0) + 1
-    return {"ruta": ruta, "total": len(mensajes), "por_tipo": por_tipo}
+    return {
+        "ruta": ruta,
+        "ruta_excel": ruta_excel,
+        "total": len(mensajes),
+        "por_tipo": por_tipo,
+    }

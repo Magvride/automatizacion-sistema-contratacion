@@ -29,7 +29,7 @@ from desktop.paths import BASE_DIR, icono_app
 from desktop.updater_client import UpdateCheckWorker, launch_update
 from desktop import __version__
 from desktop.widgets.dashboard_page import DashboardPage
-from desktop.widgets.pages import SourcesPage
+from desktop.widgets.pages import ConfigPage, SourcesPage
 from desktop.widgets.results_page import ResultsPage
 from desktop.widgets.sidebar import Sidebar
 from desktop.widgets.status_bar import StatusBar
@@ -106,10 +106,12 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardPage()
         self.pagina_resultados = ResultsPage()
         self.pagina_fuentes = SourcesPage()
+        self.pagina_configuracion = ConfigPage()
         for pagina in (
             self.dashboard,
             self.pagina_resultados,
             self.pagina_fuentes,
+            self.pagina_configuracion,
         ):
             pagina.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             self.stack.addWidget(self._envolver_scroll(pagina))
@@ -138,6 +140,9 @@ class MainWindow(QMainWindow):
         barra.btn_detener.clicked.connect(self._detener)
         self.dashboard.activity_log.descargar.connect(self._descargar_log)
         self.dashboard.documents_card.cambio.connect(self._actualizar_estado_entradas)
+        self.pagina_configuracion.actualizado.connect(
+            lambda mensaje: self._on_log("INFO", mensaje)
+        )
         self._actualizar_estado_entradas()
 
     # ------------------------------------------------------------------
@@ -147,6 +152,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(indice)
         if indice == 1:
             self.pagina_resultados.refrescar()
+        elif indice == 3:
+            self.pagina_configuracion.refrescar()
 
     # ------------------------------------------------------------------
     # Registro / estado
@@ -247,6 +254,22 @@ class MainWindow(QMainWindow):
 
     def _iniciar(self) -> None:
         if self.worker is not None and self.worker.isRunning():
+            return
+        try:
+            from config import credenciales_alfresco
+
+            if not credenciales_alfresco().get("contrasena"):
+                self._on_log("ERROR", "Faltan las credenciales de Alfresco.")
+                QMessageBox.warning(
+                    self,
+                    "Configurar Alfresco",
+                    "Ingresa y guarda las credenciales de Alfresco en la sección "
+                    "Configuración antes de iniciar la auditoría.",
+                )
+                return
+        except Exception as exc:  # noqa: BLE001
+            logger.error("No se pudieron leer las credenciales de Alfresco: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "Configuración de Alfresco", str(exc))
             return
         faltantes = self._faltantes()
         if faltantes:

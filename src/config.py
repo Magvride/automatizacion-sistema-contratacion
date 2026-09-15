@@ -48,6 +48,7 @@ ONEDRIVE_CARPETA_DESTINO_REL = "02_Matriz_actualizada"
 
 # Persistencia de las rutas configuradas desde la GUI.
 ARCHIVO_CONFIG_RUTAS = BASE_DIR / "config_rutas.json"
+SERVICIO_CREDENCIALES = "automatizacion-sistema-contratacion/alfresco"
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -168,6 +169,78 @@ def configurar_rutas(
     config["matriz_manual"] = str(matriz_manual) if matriz_manual else ""
     config["ordenadores"] = str(ordenadores) if ordenadores else ""
     config["onedrive_destino"] = str(onedrive_destino) if onedrive_destino else ""
+    _guardar_config_rutas(config)
+
+
+def credenciales_alfresco() -> dict:
+    """Obtiene las credenciales desde ``.env`` o el almacén seguro de Windows."""
+    config = _cargar_config_rutas()
+    url = (
+        os.getenv("ALFRESCO_SHARE_URL")
+        or os.getenv("ALFRESCO_URL")
+        or config.get("alfresco_url", "")
+        or "https://gesdoc.uis.edu.co/share/page"
+    ).strip()
+    usuario = (
+        os.getenv("ALFRESCO_SHARE_USER")
+        or os.getenv("ALFRESCO_USER")
+        or config.get("alfresco_user", "")
+        or "consulta_contratos"
+    ).strip()
+    contrasena = (
+        os.getenv("ALFRESCO_SHARE_PASS")
+        or os.getenv("ALFRESCO_PASS")
+        or ""
+    ).strip()
+
+    if not contrasena and usuario:
+        try:
+            import keyring
+
+            contrasena = keyring.get_password(SERVICIO_CREDENCIALES, usuario) or ""
+        except Exception:
+            # La aplicación puede seguir funcionando con .env si keyring no está disponible.
+            contrasena = ""
+
+    return {
+        "url": url,
+        "usuario": usuario,
+        "contrasena": contrasena,
+        "auth_method": os.getenv("ALFRESCO_AUTH_METHOD", "basic").strip() or "basic",
+    }
+
+
+def guardar_credenciales_alfresco(url: str, usuario: str, contrasena: str) -> None:
+    """Guarda URL/usuario localmente y la contraseña en el almacén del sistema."""
+    url = str(url or "").strip()
+    usuario = str(usuario or "").strip()
+    contrasena = str(contrasena or "")
+    if not url or not usuario:
+        raise ValueError("La URL y el usuario de Alfresco son obligatorios.")
+
+    actuales = credenciales_alfresco()
+    if not contrasena:
+        contrasena = actuales.get("contrasena", "")
+    if not contrasena:
+        raise ValueError("La contraseña de Alfresco es obligatoria la primera vez.")
+
+    try:
+        import keyring
+
+        keyring.set_password(SERVICIO_CREDENCIALES, usuario, contrasena)
+        if actuales.get("usuario") and actuales["usuario"] != usuario:
+            try:
+                keyring.delete_password(SERVICIO_CREDENCIALES, actuales["usuario"])
+            except Exception:
+                pass
+    except ImportError as exc:
+        raise RuntimeError("Falta la dependencia keyring para guardar credenciales de forma segura.") from exc
+    except Exception as exc:
+        raise RuntimeError(f"No se pudieron guardar las credenciales en Windows: {exc}") from exc
+
+    config = _cargar_config_rutas()
+    config["alfresco_url"] = url
+    config["alfresco_user"] = usuario
     _guardar_config_rutas(config)
 
 
