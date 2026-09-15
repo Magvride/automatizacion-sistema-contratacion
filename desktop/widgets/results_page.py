@@ -11,6 +11,7 @@ o **descargar** cada entregable:
 
 import os
 import shutil
+import logging
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -31,6 +32,8 @@ from PyQt6.QtWidgets import (
 from desktop import icons
 from desktop.paths import BASE_DIR
 from desktop.widgets.components import Card, CardHead, repolish
+
+logger = logging.getLogger("app")
 
 ENTREGABLES = (
     {
@@ -114,7 +117,11 @@ class _EntregableCard(Card):
 
     def _abrir(self) -> None:
         if self.ruta and os.path.isfile(self.ruta):
-            os.startfile(self.ruta)  # noqa: S606 - Windows
+            try:
+                os.startfile(self.ruta)  # noqa: S606 - Windows
+            except OSError as exc:
+                logger.error("No se pudo abrir el entregable %s: %s", self.ruta, exc, exc_info=True)
+                QMessageBox.critical(self, "Abrir entregable", f"No se pudo abrir el archivo:\n{exc}")
 
     def _descargar(self) -> None:
         if not self.ruta or not os.path.isfile(self.ruta):
@@ -126,7 +133,11 @@ class _EntregableCard(Card):
             "Todos los archivos (*.*)",
         )
         if destino:
-            shutil.copy2(self.ruta, destino)
+            try:
+                shutil.copy2(self.ruta, destino)
+            except OSError as exc:
+                logger.error("No se pudo descargar el entregable %s: %s", self.ruta, exc, exc_info=True)
+                QMessageBox.critical(self, "Descargar entregable", f"No se pudo guardar el archivo:\n{exc}")
 
 
 class _DialogoEnvio(QDialog):
@@ -265,10 +276,19 @@ class _NotificacionCard(Card):
     def _preparar(self) -> None:
         if not self.ruta or not os.path.isfile(self.ruta):
             return
-        from auditoria_documental import notificacion
+        try:
+            from auditoria_documental import notificacion
 
-        resultados = notificacion.resultados_desde_excel(self.ruta)
-        mensajes = notificacion.construir_mensajes(resultados)
+            resultados = notificacion.resultados_desde_excel(self.ruta)
+            mensajes = notificacion.construir_mensajes(resultados)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("No se pudieron preparar los correos: %s", exc, exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Preparar envío",
+                f"No se pudieron preparar los correos:\n\n{exc}",
+            )
+            return
         if not mensajes:
             QMessageBox.information(
                 self, "Sin correos",
@@ -280,7 +300,12 @@ class _NotificacionCard(Card):
         if dialogo.exec() != QDialog.DialogCode.Accepted or not dialogo.chk_autorizo.isChecked():
             return
 
-        resumen_envio = notificacion.enviar(resultados, autorizado=True, mensajes=mensajes)
+        try:
+            resumen_envio = notificacion.enviar(resultados, autorizado=True, mensajes=mensajes)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("No se pudieron enviar los correos: %s", exc, exc_info=True)
+            QMessageBox.critical(self, "Envío de correos", f"No se pudieron enviar los correos:\n\n{exc}")
+            return
         QMessageBox.information(self, "Envío de correos", resumen_envio["detalle"])
 
 
