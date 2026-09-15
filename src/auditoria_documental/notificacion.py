@@ -24,6 +24,7 @@ PLANTILLA_POR_DEFECTO = (
     "Cordial saludo, {ordenador}.\n\n"
     "Le informamos que los siguientes contratos a su cargo tienen pendientes en "
     "el repositorio documental (Alfresco):\n\n"
+    "Centro(s) de costo: {centro_costo}\n\n"
     "{contratos}\n\n"
     "Le solicitamos gestionar la creación o el cargue del expediente.\n\n"
     "División de Contratación\nUniversidad Industrial de Santander"
@@ -63,9 +64,15 @@ def destinatarios(resultados) -> list:
         if not correo:
             continue
         ordenador = str(resultado.get("ordenador", "") or resultado.get("supervisor", "")).strip()
-        grupo = grupos.setdefault(correo, {"correo": correo, "ordenador": ordenador, "contratos": []})
+        grupo = grupos.setdefault(
+            correo,
+            {"correo": correo, "ordenador": ordenador, "contratos": [], "centros_costo": []},
+        )
         if not grupo["ordenador"] and ordenador:
             grupo["ordenador"] = ordenador
+        centro_costo = str(resultado.get("centro_costo", "")).strip()
+        if centro_costo and centro_costo not in grupo["centros_costo"]:
+            grupo["centros_costo"].append(centro_costo)
         faltantes = str(resultado.get("listado_faltantes", "")).strip()
         contrato = str(resultado.get("contrato", ""))
         grupo["contratos"].append(f"{contrato} ({faltantes})" if faltantes else contrato)
@@ -131,6 +138,7 @@ def resultados_desde_excel(ruta: str) -> list:
                 "estado_alfresco": "ENCONTRADA" if encontrada else "NO SE EVIDENCIA",
                 "correo_ordenador": valor(fila, "CORREO ORDENADOR"),
                 "ordenador": valor(fila, "SUPERVISOR / DESTINATARIO"),
+                "centro_costo": valor(fila, "CENTRO DE COSTO"),
                 "faltantes": valor(fila, "DOCS FALTANTES"),
                 "listado_faltantes": valor(fila, "LISTADO DE FALTANTES"),
             }
@@ -148,6 +156,7 @@ def construir_mensajes(resultados, asunto: str = "", plantilla: str = "") -> lis
         contratos = destino["contratos"]
         valores = {
             "ordenador": destino["ordenador"],
+            "centro_costo": "; ".join(destino.get("centros_costo", [])),
             "contratos": "\n".join(f"  - {c}" for c in contratos),
             "contrato": ", ".join(contratos),
         }

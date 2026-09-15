@@ -7,9 +7,11 @@ from auditoria_documental import notificacion
 def _resultados():
     return [
         {"contrato": "20-A", "estado_alfresco": "NO SE EVIDENCIA",
-         "correo_ordenador": "juan@uis.edu.co", "ordenador": "JUAN PEREZ"},
+         "correo_ordenador": "juan@uis.edu.co", "ordenador": "JUAN PEREZ",
+         "centro_costo": "CC1"},
         {"contrato": "20-B", "estado_alfresco": "NO SE EVIDENCIA",
-         "correo_ordenador": "juan@uis.edu.co", "ordenador": "JUAN PEREZ"},
+         "correo_ordenador": "juan@uis.edu.co", "ordenador": "JUAN PEREZ",
+         "centro_costo": "CC1"},
         {"contrato": "20-C", "estado_alfresco": "NO SE EVIDENCIA",
          "correo_ordenador": "", "ordenador": "MARIA GOMEZ"},
         {"contrato": "20-D", "estado_alfresco": "ENCONTRADA",
@@ -35,6 +37,7 @@ def test_construir_mensajes():
     assert mensajes[0]["para"] == "juan@uis.edu.co"
     assert "20-A" in mensajes[0]["cuerpo"] and "20-B" in mensajes[0]["cuerpo"]
     assert "JUAN PEREZ" in mensajes[0]["cuerpo"]
+    assert "CC1" in mensajes[0]["cuerpo"]
 
 
 def test_enviar_sin_autorizacion_no_envia():
@@ -84,9 +87,12 @@ def test_resultados_desde_excel(tmp_path):
     libro = openpyxl.Workbook()
     hoja = libro.active
     hoja.title = "DIAGNOSTICO"
-    hoja.append(["CONTRATO", "CARPETA ENCONTRADA", "SUPERVISOR / DESTINATARIO", "CORREO ORDENADOR"])
-    hoja.append(["20-A", "No encontrada", "JUAN PEREZ", "juan@uis.edu.co"])
-    hoja.append(["20-B", "Encontrada", "MARIA GOMEZ", "maria@uis.edu.co"])
+    hoja.append([
+        "CONTRATO", "CARPETA ENCONTRADA", "SUPERVISOR / DESTINATARIO",
+        "CORREO ORDENADOR", "CENTRO DE COSTO",
+    ])
+    hoja.append(["20-A", "No encontrada", "JUAN PEREZ", "juan@uis.edu.co", "CC1"])
+    hoja.append(["20-B", "Encontrada", "MARIA GOMEZ", "maria@uis.edu.co", "CC2"])
     libro.save(ruta)
 
     resultados = notificacion.resultados_desde_excel(str(ruta))
@@ -95,5 +101,6 @@ def test_resultados_desde_excel(tmp_path):
     assert resultados[0]["contrato"] == "20-A"
     assert resultados[0]["estado_alfresco"] == "NO SE EVIDENCIA"
     assert resultados[0]["correo_ordenador"] == "juan@uis.edu.co"
+    assert resultados[0]["centro_costo"] == "CC1"
     assert resultados[1]["estado_alfresco"] == "ENCONTRADA"
     assert len(notificacion.destinatarios(resultados)) == 1

@@ -85,7 +85,7 @@ class EtlPipeline:
             ruta_consolidado=None,
             lento=False,
             no_zip=False,
-            enviar_correos=True,
+            enviar_correos=False,
             no_notificar=False,
             ruta_unificado=None,
             reporte_nuevas=None,
@@ -221,13 +221,10 @@ class EtlPipeline:
         return {"registros": registros, "detalle": f"{registros} expedientes"}
 
     def _notificacion(self, args, salidas) -> dict:
-        from auditoria_documental import notificacion
-        from auditoria_documental.notificacion import resultados_desde_excel
-
-        resultados = resultados_desde_excel(salidas["auditoria"])
-        resumen = notificacion.enviar(resultados, autorizado=True)
-        self._emitir("notificacion", "running", 100, resumen.get("detalle", "Envío terminado"))
-        return {"registros": resumen.get("enviados", 0), "detalle": resumen.get("detalle", "Envío terminado")}
+        # El envío es una acción manual posterior a la revisión del reporte.
+        # La interfaz de Resultados construye los mensajes y solicita autorización.
+        self._emitir("notificacion", "running", 100, "Borradores de correo listos…")
+        return {"registros": 0, "detalle": "Borradores generados; envío pendiente de autorización"}
 
     # ------------------------------------------------------------------
     # Punto de entrada

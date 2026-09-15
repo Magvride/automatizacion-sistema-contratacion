@@ -76,7 +76,7 @@ ANCHOS_GRANULAR = [4, 8, 40, 10, 26, 40, 12, 45, 18, 18]
 # enriquecida con la información del reporte de nuevas versiones.
 CABECERAS_DIAGNOSTICO = [
     "CONTRATO", "CLASE", "CONTRATISTA", "VALOR", "FECHA INICIO", "FECHA FIN",
-    "TIPO", "UNIDAD", "ESTADO CONTRATO",
+    "TIPO", "UNIDAD", "CENTRO DE COSTO", "ESTADO CONTRATO",
     "ENLACE CARPETA ALFRESCO", "CARPETA ENCONTRADA", "DESCARGADA",
     "Nº PAGOS",
     "DOCS REQUERIDOS", "DOCS HALLADOS", "DOCS FALTANTES", "LISTADO DE FALTANTES",
@@ -87,7 +87,7 @@ CABECERAS_DIAGNOSTICO = [
     "DESCRIPCIÓN Y ALERTAS",
 ]
 ANCHOS_DIAGNOSTICO = [
-    16, 8, 30, 15, 12, 12, 20, 34, 16,
+    16, 8, 30, 15, 12, 12, 20, 34, 34, 16,
     46, 16, 10, 10,
     14, 12, 12, 46, 12, 14, 26, 30, 50, 14, 30, 48, 28, 100,
 ]
@@ -432,6 +432,7 @@ def fila_diagnostico(contrato: dict, fecha_revision: str = "") -> dict:
         contrato.get("fecha_fin", ""),
         contrato.get("tipo", ""),
         contrato.get("unidad", ""),
+        contrato.get("centro_costo", ""),
         contrato.get("estado_contrato", ""),
         URL_CARPETA.format(node_id=node_id) if node_id else "",
         "Encontrada" if encontrada else "No encontrada",
