@@ -16,6 +16,7 @@ import os
 import re
 import unicodedata
 from datetime import date, datetime
+from html import escape as _escape_html
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -34,11 +35,30 @@ TIPOS = ("faltante", "inconsistencia", "no_localizada", "completo", "consolidado
 
 _CAMPO_RE = re.compile(r"\{\{\s*([A-Z_]+)\s*\}\}")
 
+# Mismo patrón que ``ordenadores.extraer_correos``: las celdas de apoyo del
+# reporte SEP mezclan nombres y formatos ("ESCUELA X <apoyo@uis.edu.co>").
+_CORREO_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def extraer_correos_apoyo(texto) -> list:
+    """Extrae los correos de apoyo de una celda libre, sin duplicados y en orden."""
+    if texto is None:
+        return []
+    vistos = set()
+    correos = []
+    for encontrado in _CORREO_RE.findall(str(texto)):
+        correo = encontrado.strip()
+        clave = correo.casefold()
+        if clave and clave not in vistos:
+            vistos.add(clave)
+            correos.append(correo)
+    return correos
+
 
 def asunto_correo(contrato: str = "", cantidad: int = 1) -> str:
     """Asunto del correo: sin saludo ni nombre del ordenador."""
     if cantidad > 1:
-        return "Documentación pendiente de varios contratos"
+        return "Documentación pendiente en la verificación de alfresco"
     return f"Documentación pendiente del contrato {str(contrato or '').strip()}".strip()
 
 
@@ -183,6 +203,9 @@ def construir_mensajes(
                 "tipo": plantilla["titulo"],
                 "para": fila["SUPERVISOR / DESTINATARIO"],
                 "correo": fila["CORREO ORDENADOR"],
+                # Correos de apoyo del reporte SEP: van como CC en el Excel
+                # de envío y también son destinatarios del aviso.
+                "correos_apoyo": contrato.get("correos_apoyo", ""),
                 "asunto": asunto_correo(contrato_id),
                 "cuerpo": renderizar(plantilla["cuerpo"], valores),
                 "ordenador_centro_costo": " - ".join(
@@ -220,17 +243,22 @@ def escribir_borradores(mensajes: list, ruta: str) -> str:
 
 
 def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
-    """Escribe los borradores en una tabla compatible con Power Automate."""
+    """Escribe los borradores en una tabla compatible con Power Automate.
+
+    Columnas: ``CORREO`` (ordenador), ``CC`` (correos de apoyo del reporte
+    SEP, también destinatarios), ``ASUNTO`` y ``CUERPO``.
+    """
     libro = Workbook()
     hoja = libro.active
     hoja.title = "Correos"
-    cabeceras = ["CORREO", "ASUNTO", "CUERPO"]
+    cabeceras = ["CORREO", "CC", "ASUNTO", "CUERPO"]
     hoja.append(cabeceras)
 
     filas = _agrupar_mensajes_excel(mensajes)
-    for correo, asunto, cuerpo in filas:
+    for correo, cc, asunto, cuerpo in filas:
         hoja.append([
             correo,
+            cc,
             asunto,
             cuerpo,
         ])
@@ -242,13 +270,14 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
         celda.alignment = Alignment(horizontal="center", vertical="center")
 
     hoja.column_dimensions["A"].width = 34
-    hoja.column_dimensions["B"].width = 60
-    hoja.column_dimensions["C"].width = 110
+    hoja.column_dimensions["B"].width = 40
+    hoja.column_dimensions["C"].width = 60
+    hoja.column_dimensions["D"].width = 110
     hoja.freeze_panes = "A2"
 
     if filas:
         ultima_fila = len(filas) + 1
-        tabla = Table(displayName="CorreosPowerAutomate", ref=f"A1:C{ultima_fila}")
+        tabla = Table(displayName="CorreosPowerAutomate", ref=f"A1:D{ultima_fila}")
         tabla.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2",
             showFirstColumn=False,
@@ -258,7 +287,7 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
         )
         hoja.add_table(tabla)
 
-    for fila in hoja.iter_rows(min_row=2, max_row=hoja.max_row, min_col=1, max_col=3):
+    for fila in hoja.iter_rows(min_row=2, max_row=hoja.max_row, min_col=1, max_col=4):
         for celda in fila:
             celda.alignment = Alignment(vertical="top", wrap_text=True)
 
@@ -275,19 +304,36 @@ _CIERRE_CORREO = (
     "Gracias por su colaboración."
 )
 
+# Cierre en dos párrafos HTML (mismo texto que ``_CIERRE_CORREO``).
+_CIERRE_CORREO_HTML_1 = (
+    "Le agradecemos gestionar el cargue de la documentación a la brevedad posible, "
+    "con el fin de mantener los expedientes al día y evitar retrasos en la rendición. "
+    "Cualquier novedad que impida el cargue del contrato, le agradecemos notificarlo."
+)
+_CIERRE_CORREO_HTML_2 = "Gracias por su colaboración."
+
 
 def _agrupar_mensajes_excel(mensajes: list) -> list:
-    """Agrupa en un solo correo los contratos del mismo destinatario."""
+    """Agrupa en un solo correo los contratos del mismo destinatario.
+
+    Devuelve filas ``(correo, cc, asunto, cuerpo)`` donde ``cc`` une los
+    correos de apoyo SEP de todos los contratos del grupo (sin duplicados y
+    sin repetir el correo principal). Los apoyos también son destinatarios.
+    """
     grupos = {}
     orden = []
     for indice, mensaje in enumerate(mensajes or []):
         correo = str(mensaje.get("correo", "")).strip()
         clave = correo.casefold() or f"__sin_correo_{indice}"
         if clave not in grupos:
-            grupos[clave] = {"correo": correo, "mensajes": [mensaje]}
+            grupos[clave] = {"correo": correo, "mensajes": [mensaje], "apoyos": []}
             orden.append(clave)
         else:
             grupos[clave]["mensajes"].append(mensaje)
+        for apoyo in extraer_correos_apoyo(mensaje.get("correos_apoyo", "")):
+            ya = {a.casefold() for a in grupos[clave]["apoyos"]}
+            if apoyo.casefold() not in ya and apoyo.casefold() != correo.casefold():
+                grupos[clave]["apoyos"].append(apoyo)
 
     filas = []
     for clave in orden:
@@ -295,7 +341,7 @@ def _agrupar_mensajes_excel(mensajes: list) -> list:
         lote = grupo["mensajes"]
         contrato = str(lote[0].get("contrato", "")).strip()
         asunto = asunto_correo(contrato=contrato, cantidad=len(lote))
-        filas.append((grupo["correo"], asunto, _cuerpo_power_automate(lote)))
+        filas.append((grupo["correo"], "; ".join(grupo["apoyos"]), asunto, _cuerpo_power_automate(lote)))
     return filas
 
 
@@ -303,26 +349,48 @@ def _es_no_localizada(mensaje: dict) -> bool:
     return "NO LOCALIZADA" in str(mensaje.get("tipo", "")).upper()
 
 
+def _esc(valor) -> str:
+    """Escapa un valor para incrustarlo en el cuerpo HTML del correo."""
+    return _escape_html(str(valor or ""), quote=False)
+
+
 def _linea_contrato(numero: int, mensaje: dict) -> str:
-    contrato = str(mensaje.get("contrato", "")).strip()
+    """Devuelve un contrato como item ``<li>`` de la lista HTML del cuerpo."""
+    contrato = _esc(str(mensaje.get("contrato", "")).strip())
     linea = (
-        f"{numero}. Contrato {contrato}— {mensaje.get('contratista', '')} — generado el día "
-        f"{mensaje.get('fecha_contrato', '')}, {mensaje.get('dias_transcurridos', '')} "
-        f"— Objeto: {mensaje.get('objeto', '')}"
+        f"<li><strong>{numero}. Contrato {contrato}</strong> — {_esc(mensaje.get('contratista', ''))} "
+        f"— generado el día {_esc(mensaje.get('fecha_contrato', ''))}, "
+        f"{_esc(mensaje.get('dias_transcurridos', ''))} "
+        f"— Objeto: {_esc(mensaje.get('objeto', ''))}"
     )
     faltantes = str(mensaje.get("listado_faltantes", "")).strip()
     if not _es_no_localizada(mensaje) and faltantes:
-        linea += f"\nDocumentos pendientes: {faltantes}"
-    return linea
+        linea += f"<br><strong>Documentos pendientes:</strong> {_esc(faltantes)}"
+    return linea + "</li>"
+
+
+def _lista_contratos_html(mensajes: list, inicio: int = 1) -> str:
+    """Envuelve las líneas de contrato en una lista ordenada HTML."""
+    items = "\n".join(
+        _linea_contrato(numero, mensaje)
+        for numero, mensaje in enumerate(mensajes, start=inicio)
+    )
+    if inicio > 1:
+        return f"<ol start=\"{inicio}\">\n{items}\n</ol>"
+    return f"<ol>\n{items}\n</ol>"
 
 
 def _cuerpo_power_automate(mensajes: list) -> str:
-    """Arma un cuerpo con un solo saludo, un marco y un solo cierre."""
+    """Arma el cuerpo en HTML (un saludo, un marco y un solo cierre).
+
+    Power Automate (conector Outlook, ``Is HTML = Sí``) ignora los saltos de
+    línea del texto plano, por eso el cuerpo usa ``<p>`` y listas ``<ol>``.
+    """
     primero = mensajes[0]
-    ordenador = str(primero.get("para", "")).strip()
+    ordenador = _esc(str(primero.get("para", "")).strip())
     marco = (
-        f"En el marco del seguimiento contractual del mes de {primero.get('mes_documento', '')} "
-        f"de 2026 (2026-{primero.get('mes_numero', '')}), le recordamos de manera atenta "
+        f"En el marco del seguimiento contractual del mes de {_esc(primero.get('mes_documento', ''))} "
+        f"de 2026 (2026-{_esc(primero.get('mes_numero', ''))}), le recordamos de manera atenta "
     )
     no_localizados = [m for m in mensajes if _es_no_localizada(m)]
     pendientes = [m for m in mensajes if not _es_no_localizada(m)]
@@ -331,52 +399,46 @@ def _cuerpo_power_automate(mensajes: list) -> str:
         if no_localizados:
             intro = (
                 "que el siguiente expediente contractual a su cargo aún no ha sido cargado "
-                "en el repositorio institucional Alfresco:\n\n"
+                "en el repositorio institucional Alfresco:"
             )
         else:
             intro = (
                 "que el expediente contractual ya fue localizado en Alfresco, pero aún presenta "
-                "documentación pendiente:\n\n"
+                "documentación pendiente:"
             )
-        detalle = _linea_contrato(1, mensajes[0])
+        detalle = _lista_contratos_html(mensajes)
     elif no_localizados and not pendientes:
         intro = (
             "que los siguientes expedientes contractuales a su cargo aún no han sido cargados "
-            "en el repositorio institucional Alfresco:\n\n"
+            "en el repositorio institucional Alfresco:"
         )
-        detalle = "\n".join(_linea_contrato(i, m) for i, m in enumerate(no_localizados, start=1))
+        detalle = _lista_contratos_html(no_localizados)
     elif pendientes and not no_localizados:
         intro = (
             "que los siguientes expedientes ya fueron localizados en Alfresco, pero aún presentan "
-            "documentación pendiente:\n\n"
+            "documentación pendiente:"
         )
-        detalle = "\n".join(_linea_contrato(i, m) for i, m in enumerate(pendientes, start=1))
+        detalle = _lista_contratos_html(pendientes)
     else:
         intro = (
             "que los siguientes expedientes contractuales a su cargo presentan novedades "
-            "en el repositorio institucional Alfresco:\n\n"
+            "en el repositorio institucional Alfresco:"
         )
-        bloques = []
-        numero = 1
-        if no_localizados:
-            lineas = []
-            for mensaje in no_localizados:
-                lineas.append(_linea_contrato(numero, mensaje))
-                numero += 1
-            bloques.append("Expedientes no cargados en Alfresco:\n" + "\n".join(lineas))
-        if pendientes:
-            lineas = []
-            for mensaje in pendientes:
-                lineas.append(_linea_contrato(numero, mensaje))
-                numero += 1
-            bloques.append("Expedientes localizados con documentación pendiente:\n" + "\n".join(lineas))
-        detalle = "\n\n".join(bloques)
+        bloques = [
+            "<p><strong>Expedientes no cargados en Alfresco:</strong></p>",
+            _lista_contratos_html(no_localizados),
+            "<p><strong>Expedientes localizados con documentación pendiente:</strong></p>",
+            _lista_contratos_html(pendientes, inicio=len(no_localizados) + 1),
+        ]
+        detalle = "\n".join(bloques)
 
-    return (
-        f"Cordial saludo, {ordenador}.\n\n"
-        f"{marco}{intro}{detalle}\n\n"
-        f"{_CIERRE_CORREO}"
-    )
+    return "\n".join([
+        f"<p>Cordial saludo, {ordenador}.</p>",
+        f"<p>{marco}{intro}</p>",
+        detalle,
+        f"<p>{_CIERRE_CORREO_HTML_1}</p>",
+        f"<p>{_CIERRE_CORREO_HTML_2}</p>",
+    ])
 
 
 def _fecha_contrato(valor):

@@ -82,7 +82,7 @@ El `.xls` de nuevas versiones se **convierte a `.xlsx`** automáticamente al car
 |---|---|
 | `Auditoria_Contratos.xlsx` | Excel con `Resumen_Cruce_Corregido` (incluye **centro de costo**, **ordenador**, valor, fecha inicio/fin, estado, docs y %), `Cruce_por_Etapa_Corr`, `DIAGNOSTICO` (una fila por contrato con contratista, valor, fechas, ordenador, **correo del ordenador**, unidad, estado, docs requeridos/hallados/faltantes, % y observación), una hoja por contrato y `Notas_Diccionario`. |
 | `Informe_Auditoria_Contrato.html` | **Informe principal.** Resumen del día (contratos procesados, % con/sin carpeta, documentos hallados/faltantes), tabla general de contratos (descargable en **Excel**) y dos módulos desplegables: **contratos con carpeta** (con desplegable de documentos faltantes y cuántos lleva del total) y **contratos sin carpeta** (en rojo: "necesita carpeta"). Incluye botón **Descargar PDF**. |
-| `10_Correos_Auditoria.xlsx` | Tabla `CorreosPowerAutomate` con las columnas `CORREO`, `ASUNTO` y `CUERPO`, lista para ser leída por Power Automate. |
+| `10_Correos_Auditoria.xlsx` | Tabla `CorreosPowerAutomate` con las columnas `CORREO` (ordenador), `CC` (correos de apoyo del reporte SEP, también destinatarios), `ASUNTO` y `CUERPO` (en HTML: párrafos y lista de contratos, para enviar con `Is HTML = Sí` en Power Automate), lista para ser leída por Power Automate. |
 
 Las credenciales de Alfresco se configuran desde la pantalla **Configuración**.
 La contraseña se guarda en el Administrador de credenciales de Windows; `.env`

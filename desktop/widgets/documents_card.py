@@ -148,13 +148,16 @@ class DocumentsCard(Card):
             self._filas[documento.id] = fila
 
         nota = QLabel(
-            "El diccionario de contratos y la tabla de ordenadores se cargan automáticamente."
+            "El diccionario de contratos se carga automáticamente. "
+            "Los correos de apoyo del Excel de ordenadores se usan como copia (CC) "
+            "en los avisos de la última fase."
         )
         nota.setObjectName("DocNote")
         nota.setWordWrap(True)
         cuerpo_layout.addWidget(nota)
 
         layout.addWidget(cuerpo)
+        self._preseleccionar_ordenadores()
 
     # ------------------------------------------------------------------
     def rutas(self) -> dict:
@@ -164,3 +167,13 @@ class DocumentsCard(Card):
         fila = self._filas.get(doc_id)
         if fila:
             fila.set_ruta(ruta)
+
+    def _preseleccionar_ordenadores(self) -> None:
+        try:
+            from config import ruta_ordenadores
+
+            ruta = ruta_ordenadores()
+        except Exception:
+            return
+        if ruta and ruta.is_file():
+            self.set_ruta("ordenadores", str(ruta))

@@ -51,6 +51,26 @@ def test_construir_consolidado_basico(tmp_path):
     assert fila["correo_ordenador"] == "juan@uis.edu.co"
 
 
+def test_construir_consolidado_con_apoyos(tmp_path):
+    ruta = _escribir_normalizados(
+        tmp_path,
+        [{"contrato": "20-2026000003", "centro_costo": "CC1", "ordenador": "JUAN PEREZ"}],
+    )
+    salida = str(tmp_path / "02_Consolidado_General.csv")
+
+    res = construir_consolidado(
+        ruta,
+        salida,
+        correos={"JUAN PEREZ": "juan@uis.edu.co"},
+        apoyos={"JUAN PEREZ": "apoyo1@uis.edu.co; apoyo2@uis.edu.co"},
+    )
+
+    assert res["encontrado"] is True
+    df = pd.read_csv(salida, encoding="utf-8-sig", dtype=str).fillna("")
+    assert "correos_apoyo" in df.columns
+    assert df.iloc[0]["correos_apoyo"] == "apoyo1@uis.edu.co; apoyo2@uis.edu.co"
+
+
 def test_construir_consolidado_sin_columna_correo(tmp_path):
     ruta = _escribir_normalizados(
         tmp_path,

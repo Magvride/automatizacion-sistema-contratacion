@@ -23,6 +23,32 @@ logger = configurar_logger("ordenadores")
 # Encabezados esperados en el Excel manual (se normalizan antes de comparar).
 COLUMNA_NOMBRE = "ORDENADORES DE GASTO"
 COLUMNA_CORREO = "CORREO"
+# El reporte SEP trae además esta columna (p. ej. "Ordenadores_SEP_*.xlsx").
+# Es opcional: si el archivo no la tiene, los apoyos quedan vacíos.
+COLUMNA_APOYO = "CORREOS DE APOYO"
+
+# Las celdas de apoyo mezclan nombres, saltos de línea y formatos como
+# "ESCUELA X <apoyo@uis.edu.co>"; se extrae con regex en vez de separar.
+_CORREO_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def extraer_correos(texto) -> list:
+    """Extrae los correos de una celda libre, sin duplicados y en orden.
+
+    Acepta separadores ``, ;`` saltos de línea y envolturas tipo
+    ``Nombre <correo@x>``. Devuelve ``[]`` si no hay nada válido.
+    """
+    if texto is None:
+        return []
+    vistos = set()
+    correos = []
+    for encontrado in _CORREO_RE.findall(str(texto)):
+        correo = encontrado.strip()
+        clave = correo.casefold()
+        if clave and clave not in vistos:
+            vistos.add(clave)
+            correos.append(correo)
+    return correos
 
 
 def normalizar_nombre(valor) -> str:
@@ -63,12 +89,41 @@ def buscar_archivo_ordenadores() -> str:
     return str(max(archivos, key=lambda archivo: archivo.stat().st_mtime))
 
 
-def cargar_correos_ordenadores(ruta: str = "") -> dict:
-    """Carga el mapa ``nombre normalizado -> correo`` desde el Excel manual.
+def _leer_tabla_ordenadores(ruta: str):
+    """Lee el Excel como tabla cruda y localiza la fila de cabecera.
 
-    Si ``ruta`` es vacía se autodetecta (config GUI o el archivo más reciente).
-    Devuelve un dict vacío si el archivo no existe, no se puede leer o no tiene
-    las columnas esperadas.
+    Devuelve ``(libro, fila_cabecera, indices)`` donde ``indices`` tiene las
+    claves ``nombre``, ``correo`` y, si existe, ``apoyo``. Si no hay cabecera
+    válida devuelve ``(None, None, {})``.
+    """
+    try:
+        libro = pd.read_excel(ruta, dtype=str, header=None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo leer el archivo de ordenadores %s: %s", ruta, exc)
+        return None, None, {}
+
+    # La cabecera puede no estar en la primera fila (el reporte exporta título y
+    # fecha arriba). Se busca la fila que contiene las columnas esperadas.
+    for i, fila in libro.iterrows():
+        mapa = {_normalizar_columna(celda): j for j, celda in enumerate(fila)}
+        if COLUMNA_NOMBRE in mapa and COLUMNA_CORREO in mapa:
+            indices = {
+                "nombre": mapa[COLUMNA_NOMBRE],
+                "correo": mapa[COLUMNA_CORREO],
+            }
+            if COLUMNA_APOYO in mapa:
+                indices["apoyo"] = mapa[COLUMNA_APOYO]
+            return libro, i, indices
+    return libro, None, {}
+
+
+def cargar_mapa_ordenadores(ruta: str = "") -> dict:
+    """Carga el mapa ``nombre normalizado -> {correo, apoyos}``.
+
+    Incluye la columna opcional ``CORREOS DE APOYO`` del reporte SEP: cada
+    entrada es ``{"correo": str, "apoyos": [str, ...]}``. Si ``ruta`` es vacía
+    se autodetecta (config GUI o el archivo más reciente). Devuelve un dict
+    vacío si el archivo no existe o no tiene las columnas esperadas.
     """
     ruta = ruta or buscar_archivo_ordenadores()
     if not ruta or not os.path.isfile(ruta):
@@ -79,24 +134,9 @@ def cargar_correos_ordenadores(ruta: str = "") -> dict:
         )
         return {}
 
-    try:
-        libro = pd.read_excel(ruta, dtype=str, header=None)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("No se pudo leer el archivo de ordenadores %s: %s", ruta, exc)
+    libro, fila_cabecera, indices = _leer_tabla_ordenadores(ruta)
+    if libro is None:
         return {}
-
-    # La cabecera puede no estar en la primera fila (el reporte exporta título y
-    # fecha arriba). Se busca la fila que contiene las columnas esperadas.
-    fila_cabecera = None
-    indices = {}
-    for i, fila in libro.iterrows():
-        mapa = {_normalizar_columna(celda): j for j, celda in enumerate(fila)}
-        if COLUMNA_NOMBRE in mapa and COLUMNA_CORREO in mapa:
-            fila_cabecera = i
-            indices["nombre"] = mapa[COLUMNA_NOMBRE]
-            indices["correo"] = mapa[COLUMNA_CORREO]
-            break
-
     if fila_cabecera is None:
         logger.warning(
             "El archivo %s debe contener las columnas 'ordenadores de gasto' y 'correo'.",
@@ -104,16 +144,48 @@ def cargar_correos_ordenadores(ruta: str = "") -> dict:
         )
         return {}
 
-    correos = {}
+    mapa = {}
     for _, fila in libro.iloc[fila_cabecera + 1:].iterrows():
         nombre = normalizar_nombre(fila.iloc[indices["nombre"]])
+        if not nombre or nombre in mapa:
+            continue
         correo = str(fila.iloc[indices["correo"]]).strip() or ""
-        if nombre and correo and nombre not in correos:
-            correos[nombre] = correo
+        if not correo:
+            continue
+        apoyos = []
+        if "apoyo" in indices:
+            apoyos = extraer_correos(fila.iloc[indices["apoyo"]])
+        mapa[nombre] = {"correo": correo, "apoyos": apoyos}
 
     logger.info(
         "Mapa de ordenadores cargado desde %s: %d registros.",
         ruta,
-        len(correos),
+        len(mapa),
     )
-    return correos
+    return mapa
+
+
+def cargar_correos_apoyo(ruta: str = "") -> dict:
+    """Carga el mapa ``nombre normalizado -> correos de apoyo`` ("a@x; b@y").
+
+    Devuelve un dict vacío si el archivo no existe o no trae la columna
+    ``CORREOS DE APOYO`` (el reporte SEP sí la trae).
+    """
+    return {
+        nombre: "; ".join(entrada.get("apoyos", []))
+        for nombre, entrada in cargar_mapa_ordenadores(ruta).items()
+        if entrada.get("apoyos")
+    }
+
+
+def cargar_correos_ordenadores(ruta: str = "") -> dict:
+    """Carga el mapa ``nombre normalizado -> correo`` desde el Excel manual.
+
+    Si ``ruta`` es vacía se autodetecta (config GUI o el archivo más reciente).
+    Devuelve un dict vacío si el archivo no existe, no se puede leer o no tiene
+    las columnas esperadas.
+    """
+    return {
+        nombre: entrada["correo"]
+        for nombre, entrada in cargar_mapa_ordenadores(ruta).items()
+    }

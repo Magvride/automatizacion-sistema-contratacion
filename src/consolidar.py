@@ -27,7 +27,7 @@ import pandas as pd
 
 from config import CONTRATOS_DIR, EXTRACCION_DIR
 from nuevas_versiones import enriquecer, leer_nuevas_versiones
-from ordenadores import cargar_correos_ordenadores, normalizar_nombre
+from ordenadores import cargar_mapa_ordenadores, normalizar_nombre
 from utils.logger import configurar_logger
 
 logger = configurar_logger("consolidacion")
@@ -55,6 +55,7 @@ COLUMNAS_CONSOLIDADO = [
     "centro_costo",
     "ordenador",
     "correo_ordenador",
+    "correos_apoyo",
     *CAMPOS_NUEVAS_VERSIONES,
     "origen",
     "uisard",
@@ -73,10 +74,56 @@ COLUMNAS_BASE = ["contrato", "centro_costo", "ordenador"]
 ORIGEN_NUEVAS_VERSIONES = "NUEVAS VERSIONES"
 
 
+def _mapas_ordenadores(correos: dict = None, apoyos: dict = None) -> tuple:
+    """Resuelve los mapas ordenador -> correo y ordenador -> apoyos.
+
+    Si ``correos`` es ``None`` se cargan ambos desde el Excel de ordenadores
+    (reporte SEP con ``CORREOS DE APOYO``). Si se inyecta ``correos`` en los
+    tests, los apoyos quedan vacíos salvo que se pasen explícitamente o que los
+    valores ya sean dicts ``{"correo": ..., "apoyos": [...]}``.
+    """
+    if correos is None:
+        mapa = cargar_mapa_ordenadores()
+        correos = {nombre: entrada["correo"] for nombre, entrada in mapa.items()}
+        apoyos = {
+            nombre: "; ".join(entrada.get("apoyos", []))
+            for nombre, entrada in mapa.items()
+            if entrada.get("apoyos")
+        }
+        return correos, apoyos
+    if apoyos is None:
+        apoyos = {}
+        for nombre, valor in correos.items():
+            if isinstance(valor, dict):
+                lista = valor.get("apoyos", [])
+                if lista:
+                    apoyos[nombre] = "; ".join(lista) if isinstance(lista, list) else str(lista)
+                correos[nombre] = valor.get("correo", "")
+    return correos, apoyos
+
+
+def _aplicar_correos(base, correos: dict, apoyos: dict) -> None:
+    """Completa ``correo_ordenador`` y ``correos_apoyo`` según el ordenador."""
+    base["correo_ordenador"] = base.get("correo_ordenador", "")
+    if "correos_apoyo" not in base.columns:
+        base["correos_apoyo"] = ""
+    if correos:
+        mapeados = base["ordenador"].map(
+            lambda nombre: correos.get(normalizar_nombre(nombre), "")
+        )
+        base.loc[mapeados != "", "correo_ordenador"] = mapeados[mapeados != ""]
+    if apoyos:
+        mapeados_apoyo = base["ordenador"].map(
+            lambda nombre: apoyos.get(normalizar_nombre(nombre), "")
+        )
+        base.loc[mapeados_apoyo != "", "correos_apoyo"] = mapeados_apoyo[mapeados_apoyo != ""]
+
+
 def construir_consolidado_desde_excel(
     ruta_excel: str,
     ruta_salida: str,
     correos: dict = None,
+    apoyos: dict = None,
 ) -> dict:
     """Construye el consolidado directamente desde el Excel cargado por el usuario."""
     from nuevas_versiones import leer_nuevas_versiones
@@ -97,14 +144,8 @@ def construir_consolidado_desde_excel(
     for col in COLUMNAS_BASE:
         if col not in base.columns:
             base[col] = ""
-    if correos is None:
-        correos = cargar_correos_ordenadores()
-    base["correo_ordenador"] = base.get("correo_ordenador", "")
-    if correos:
-        mapeados = base["ordenador"].map(
-            lambda nombre: correos.get(normalizar_nombre(nombre), "")
-        )
-        base.loc[mapeados != "", "correo_ordenador"] = mapeados[mapeados != ""]
+    correos, apoyos = _mapas_ordenadores(correos, apoyos)
+    _aplicar_correos(base, correos, apoyos)
 
     for campo in CAMPOS_NUEVAS_VERSIONES:
         if campo not in base.columns:
@@ -156,6 +197,7 @@ def construir_consolidado(
     ruta_normalizados: str,
     ruta_salida: str,
     correos: dict = None,
+    apoyos: dict = None,
 ) -> dict:
     """Construye el consolidado 02 (solo nuevas versiones) y lo guarda en CSV.
 
@@ -192,11 +234,12 @@ def construir_consolidado(
         if campo not in base.columns:
             base[campo] = ""
 
-    # El correo del ordenador se completa con el Excel manual (nuevas versiones).
-    if correos is None:
-        correos = cargar_correos_ordenadores()
+    # El correo del ordenador (y sus apoyos SEP) se completa con el Excel manual.
+    correos, apoyos = _mapas_ordenadores(correos, apoyos)
     if "correo_ordenador" not in base.columns:
         base["correo_ordenador"] = ""
+    if "correos_apoyo" not in base.columns:
+        base["correos_apoyo"] = ""
     if correos and "ordenador" in base.columns:
         mapeados = base["ordenador"].map(
             lambda nombre: correos.get(normalizar_nombre(nombre), "")
@@ -208,6 +251,12 @@ def construir_consolidado(
             int(encontrados.sum()),
             len(base),
         )
+    if apoyos and "ordenador" in base.columns:
+        mapeados_apoyo = base["ordenador"].map(
+            lambda nombre: apoyos.get(normalizar_nombre(nombre), "")
+        )
+        con_apoyo = mapeados_apoyo != ""
+        base.loc[con_apoyo, "correos_apoyo"] = mapeados_apoyo[con_apoyo]
 
     # Columnas que rellenará la fase Alfresco MCP (o que quedan fijas sin UISARD).
     base["origen"] = ORIGEN_NUEVAS_VERSIONES

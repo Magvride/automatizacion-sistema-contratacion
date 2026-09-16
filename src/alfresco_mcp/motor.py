@@ -37,6 +37,7 @@ _CLAVES_EXTRA = (
     "contratista", "tipo", "valor", "total_pagado", "fecha_contrato",
     "fecha_inicio", "fecha_fin", "duracion", "estado_contrato", "unidad",
     "modalidad", "objeto", "centro_costo", "ordenador", "correo_ordenador",
+    "correos_apoyo",
     "contrato_id", "req", "rep", "pct", "faltan", "num_pagos", "coincide_matriz",
 )
 

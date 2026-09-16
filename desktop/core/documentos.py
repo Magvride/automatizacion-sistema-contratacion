@@ -48,6 +48,15 @@ def documentos() -> tuple[DocumentoEntrada, ...]:
                 "contratos_*",
                 (".xlsx", ".xls"),
             ),
+            DocumentoEntrada(
+                "ordenadores",
+                "Excel de ordenadores",
+                "Ordenadores de gasto con correo y correos de apoyo (.xlsx)",
+                MATRIZ_MANUAL_DIR,
+                "Ordenadores_{fecha}.xlsx",
+                "Ordenadores_20*",
+                (".xlsx",),
+            ),
         )
     return _DOCUMENTOS
 
