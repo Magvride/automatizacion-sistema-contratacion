@@ -393,7 +393,7 @@ def fase_alfresco_mcp(args, salidas: dict, on_progreso=None, on_resultado=None) 
         usuario=usuario,
         contrasena=contrasena,
         verify_ssl=os.getenv("ALFRESCO_VERIFY_SSL", "false").lower() == "true",
-        timeout=int(os.getenv("ALFRESCO_TIMEOUT", "15")),
+        timeout=int(os.getenv("ALFRESCO_TIMEOUT", "30")),
         auth_method=credenciales["auth_method"],
     )
 
@@ -434,13 +434,21 @@ def fase_alfresco_mcp(args, salidas: dict, on_progreso=None, on_resultado=None) 
     try:
         from src.auditoria_documental.correos import generar_borradores
 
-        generar_borradores(
+        info_correos = generar_borradores(
             estado["resultados"],
             ruta_correos,
             ruta_diccionario=ruta_diccionario,
             fecha_revision=fecha_rev,
             ruta_excel=salidas.get("correos_excel", ""),
         )
+        ruta_excel_efectiva = (info_correos or {}).get("ruta_excel", salidas.get("correos_excel", ""))
+        if ruta_excel_efectiva != salidas.get("correos_excel", ""):
+            logger.warning(
+                "El Excel de correos no pudo sobrescribirse (¿abierto?). Última versión en: %s",
+                ruta_excel_efectiva,
+            )
+        else:
+            logger.info("Excel de correos para envío: %s", ruta_excel_efectiva)
     except Exception as exc:  # noqa: BLE001
         logger.warning("No se pudieron generar los borradores de correo: %s", exc)
 

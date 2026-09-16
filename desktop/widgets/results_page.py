@@ -114,7 +114,16 @@ class _EntregableCard(Card):
     def actualizar(self, carpeta: str) -> None:
         self.ruta = os.path.join(carpeta, self.spec["archivo"])
         existe = os.path.isfile(self.ruta)
-        estado = "generado" if existe else "no generado"
+        if existe:
+            try:
+                import datetime as _dt
+
+                fh = _dt.datetime.fromtimestamp(os.path.getmtime(self.ruta))
+                estado = f"generado · {fh.strftime('%Y-%m-%d %H:%M')}"
+            except OSError:
+                estado = "generado"
+        else:
+            estado = "no generado"
         self.lbl_estado.setText(f"{self.spec['archivo']} · {estado}")
         self.lbl_estado.setObjectName("DocPathOk" if existe else "DocPath")
         repolish(self.lbl_estado)

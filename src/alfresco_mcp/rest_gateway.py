@@ -11,6 +11,7 @@ La sesión HTTP es inyectable (``session=``) para poder testear sin red.
 
 import base64
 import os
+import random
 import time
 
 import requests
@@ -24,7 +25,9 @@ logger = configurar_logger("alfresco_rest")
 _SUFIJOS_SHARE = ("/share/page", "/share")
 
 # Reintentos ante errores transitorios (BadStatusLine / cortes de conexión).
-REINTENTOS_POR_DEFECTO = 3
+# Se subió de 3 a 5: con 4 hilos el proxy de Alfresco devuelve
+# ``HTTP/1.1 0`` en ráfagas y 3 intentos no alcanzan (conteos 45 vs 53).
+REINTENTOS_POR_DEFECTO = 5
 
 # Códigos HTTP transitorios del proxy/Alfresco que conviene reintentar.
 _ESTADOS_REINTENTABLES = frozenset({429, 500, 502, 503, 504})
@@ -46,7 +49,7 @@ class RestAlfrescoGateway(AlfrescoGateway):
         usuario: str,
         contrasena: str,
         verify_ssl: bool = False,
-        timeout: int = 15,
+        timeout: int = 30,
         session=None,
         auth_method: str = "basic",
         reintentos: int = REINTENTOS_POR_DEFECTO,
@@ -98,13 +101,33 @@ class RestAlfrescoGateway(AlfrescoGateway):
         y, bajo carga, su proxy responde ``502/503/504``; el proyecto de
         referencia lo resolvía con reintentos y backoff. Se reintentan tanto
         los cortes de conexión como los estados HTTP transitorios.
+
+        Se capturan ``ConnectionError``, ``Timeout`` y además
+        ``ChunkedEncodingError`` / resto de ``RequestException`` con firma
+        transitoria (``BadStatusLine``, ``RemoteDisconnected``, ``aborted``),
+        que antes escapaban al ``except`` y abortaban el contrato al primer
+        fallo. El backoff es exponencial con jitter para no sincronizar los
+        hilos en paralelo contra el proxy.
         """
         ultimo = None
         for intento in range(1, self.reintentos + 1):
             try:
                 respuesta = funcion(*args, **kwargs)
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                    requests.exceptions.ChunkedEncodingError) as exc:
                 ultimo = exc
+            except requests.exceptions.RequestException as exc:
+                # Solo son reintentables los cortes a nivel de conexión;
+                # un 4xx real (credenciales, query malformada) no se reintenta
+                # aquí sino que lo eleva _json/raise_for_status.
+                texto = f"{exc}".lower()
+                if any(marca in texto for marca in (
+                    "badstatusline", "remotedisconnected", "connection aborted",
+                    "connection reset", "broken pipe", "max retries",
+                )):
+                    ultimo = exc
+                else:
+                    raise
             else:
                 if getattr(respuesta, "status_code", 200) not in _ESTADOS_REINTENTABLES:
                     return respuesta
@@ -116,7 +139,7 @@ class RestAlfrescoGateway(AlfrescoGateway):
                 intento, self.reintentos, ultimo,
             )
             if intento < self.reintentos:
-                time.sleep(0.7 * intento)
+                time.sleep(1.0 * (2 ** (intento - 1)) + random.uniform(0, 0.5))
         raise ultimo
 
     def _get(self, url: str, params: dict = None):
@@ -144,8 +167,11 @@ class RestAlfrescoGateway(AlfrescoGateway):
             ) from exc
 
     # ------------------------------------------------------------- búsqueda
-    def buscar_carpetas(self, numero: str, max_items: int = 10) -> list:
+    def buscar_carpetas(self, numero: str, max_items: int = 25) -> list:
         """Busca carpetas por número (AFTS) y devuelve candidatas normalizadas."""
+        numero = str(numero or "").strip()
+        if not numero:
+            return []
         cuerpo = {
             "query": {
                 "query": f'{numero} AND TYPE:"td:carpeta"',

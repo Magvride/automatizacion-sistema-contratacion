@@ -247,6 +247,11 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
 
     Columnas: ``CORREO`` (ordenador), ``CC`` (correos de apoyo del reporte
     SEP, también destinatarios), ``ASUNTO`` y ``CUERPO``.
+
+    El guardado es atómico (temporal + reemplazo) y, si el destino está
+    bloqueado (Excel abierto o sincronización de OneDrive -> ``PermissionError``),
+    guarda una copia versionada ``..._YYYYMMDD_HHMMSS.xlsx`` en la misma carpeta
+    y la devuelve, para no dejar el archivo viejo como si fuera el nuevo.
     """
     libro = Workbook()
     hoja = libro.active
@@ -292,7 +297,22 @@ def escribir_borradores_excel(mensajes: list, ruta: str) -> str:
             celda.alignment = Alignment(vertical="top", wrap_text=True)
 
     os.makedirs(os.path.dirname(ruta) or ".", exist_ok=True)
-    libro.save(ruta)
+    try:
+        tmp = f"{ruta}.tmp"
+        libro.save(tmp)
+        os.replace(tmp, ruta)
+    except PermissionError as exc:
+        from datetime import datetime as _dt
+
+        base, ext = os.path.splitext(ruta)
+        alternativa = f"{base}_{_dt.now().strftime('%Y%m%d_%H%M%S')}{ext or '.xlsx'}"
+        libro.save(alternativa)
+        logger.warning(
+            "No se pudo sobrescribir %s (¿abierto en Excel/OneDrive?): %s. "
+            "Última versión guardada en %s. Cierre el archivo y regenere.",
+            ruta, exc, alternativa,
+        )
+        return alternativa
     logger.info("Excel de correos para Power Automate guardado: %s (%d).", ruta, len(filas))
     return ruta
 
@@ -495,14 +515,14 @@ def generar_borradores(
     )
     escribir_borradores(mensajes, ruta)
     ruta_excel = ruta_excel or os.path.splitext(ruta)[0] + ".xlsx"
-    escribir_borradores_excel(mensajes, ruta_excel)
+    ruta_excel_efectiva = escribir_borradores_excel(mensajes, ruta_excel)
 
     por_tipo = {}
     for mensaje in mensajes:
         por_tipo[mensaje["tipo"]] = por_tipo.get(mensaje["tipo"], 0) + 1
     return {
         "ruta": ruta,
-        "ruta_excel": ruta_excel,
+        "ruta_excel": ruta_excel_efectiva,
         "total": len(mensajes),
         "por_tipo": por_tipo,
     }

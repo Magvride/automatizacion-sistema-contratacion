@@ -45,7 +45,9 @@ _CLAVES_EXTRA = (
 _CODIGOS_PAGO = ("fco62", "fco69", "fco74")
 
 # Hilos por defecto para la verificación (configurable con ALFRESCO_WORKERS).
-WORKERS_POR_DEFECTO = 4
+# Se baja de 4 a 2: con 4 hilos el proxy de gesdoc responde ráfagas de
+# ``BadStatusLine HTTP/1.1 0`` y el conteo varía entre PCs/corridas (45 vs 53).
+WORKERS_POR_DEFECTO = 2
 
 
 def _contar_pagos(resultado: dict) -> int:
@@ -257,6 +259,30 @@ def ejecutar_auditoria(
             on_progreso, on_resultado,
         )
 
+    # Segunda oportunidad determinística: los contratos que quedaron con
+    # ``error_consulta`` (fallo de red, no ausencia real) se reintentan una vez
+    # en secuencial. Sin esto, cada corrida cuenta distinto según qué hilos
+    # sufrieron el BadStatusLine del proxy.
+    errores = [r for r in resultados if (r.get("verificacion") or {}).get("MOTIVO") == "error_consulta"]
+    if errores:
+        logger.warning(
+            "Reintentando %d contratos con error de consulta (secuencial).",
+            len(errores),
+        )
+        por_contrato = {str(f.get("contrato", "")).strip(): f for f in filas}
+        for resultado in resultados:
+            if (resultado.get("verificacion") or {}).get("MOTIVO") != "error_consulta":
+                continue
+            fila = por_contrato.get(str(resultado.get("contrato", "")).strip())
+            if not fila:
+                continue
+            nuevo = _procesar(fila, gateway, diccionario, contratistas, max_archivos)
+            if nuevo is None:
+                continue
+            # Se actualiza en sitio: no se reemite on_resultado/on_progreso para
+            # no duplicar entradas en los recolectores del llamador.
+            resultado.update(nuevo)
+
     resumen_ver = escribir_verificacion(resultados, ruta_06, ruta_07)
     generar_auditoria(resultados, ruta_09, periodo=periodo, fecha_revision=fecha_revision)
 
@@ -264,13 +290,18 @@ def ejecutar_auditoria(
         "total": len(resultados),
         "encontradas": sum(1 for r in resultados if r.get("estado_alfresco") == "ENCONTRADA"),
         "no_encontradas": sum(1 for r in resultados if r.get("estado_alfresco") != "ENCONTRADA"),
+        "errores_consulta": sum(
+            1 for r in resultados if (r.get("verificacion") or {}).get("MOTIVO") == "error_consulta"
+        ),
         "ruta_06": ruta_06,
         "ruta_07": ruta_07,
         "ruta_09": ruta_09,
         "verificacion": resumen_ver,
     }
     logger.info(
-        "Auditoría completada: %d contratos | %d encontradas | %d no encontradas -> %s",
-        resumen["total"], resumen["encontradas"], resumen["no_encontradas"], ruta_09,
+        "Auditoría completada: %d contratos | %d encontradas | %d no encontradas "
+        "(%d con error de consulta) -> %s",
+        resumen["total"], resumen["encontradas"], resumen["no_encontradas"],
+        resumen["errores_consulta"], ruta_09,
     )
     return resumen

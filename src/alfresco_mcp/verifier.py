@@ -86,9 +86,15 @@ def elegir_carpeta(candidatas: list, numero: str, pad: str) -> tuple:
     if not numero:
         return None, False
 
+    candidatas = candidatas or []
+    # Si la búsqueda devolvió archivos y carpetas, solo las carpetas valen.
+    solo_carpetas = [c for c in candidatas if c.get("es_carpeta")]
+    if solo_carpetas:
+        candidatas = solo_carpetas
+
     estricta = None
     laxa = None
-    for candidata in candidatas or []:
+    for candidata in candidatas:
         prefijo_carpeta, numero_carpeta = _partes_carpeta(candidata.get("nombre", ""))
         if not _mismo_entero(numero_carpeta, numero):
             continue
