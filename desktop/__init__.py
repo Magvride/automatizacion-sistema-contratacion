@@ -6,4 +6,4 @@ Paquete independiente del backend ETL (``src/``). El backend se importa desde
 ``sys.path``.
 """
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
