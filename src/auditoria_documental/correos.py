@@ -383,9 +383,9 @@ def _linea_contrato(numero: int, mensaje: dict) -> str:
         f"{_esc(mensaje.get('dias_transcurridos', ''))} "
         f"— Objeto: {_esc(mensaje.get('objeto', ''))}"
     )
-    faltantes = str(mensaje.get("listado_faltantes", "")).strip()
-    if not _es_no_localizada(mensaje) and faltantes:
-        linea += f"<br><strong>Documentos pendientes:</strong> {_esc(faltantes)}"
+    #faltantes = str(mensaje.get("listado_faltantes", "")).strip()
+    #if not _es_no_localizada(mensaje) and faltantes:
+       # linea += f"<br><strong>Documentos pendientes:</strong> {_esc(faltantes)}"
     return linea + "</li>"
 
 
